@@ -1,44 +1,78 @@
-const getUsers = (req, res) => {
-  res.status(200).json({ 
-      msn: "Aquí se listarán los usuarios (Endpoint GET funcionando)" 
-  });
+const DB_URL = 'http://localhost:4000/users';
+
+const getUsers = async (req, res) => {
+  try {
+    const response = await fetch(DB_URL);
+    const data = await response.json();
+    res.status(200).json(data);
+  } catch (error) {
+    res.status(500).json({ msn: "Error al obtener usuarios" });
+  }
 };
 
-const createUser = (req, res) => {
-  // Asegúrate de enviar exactamente estas llaves en Postman, sin espacios extra
-  const { name, email, document } = req.body;
-
-  res.status(201).json({ 
-    msn: "Usuario creado exitosamente",
-    data: {
-      name, 
-      email, 
-      document
-    }
-  });
+const getUserById = async (req, res) => {
+  try {
+    const response = await fetch(`${DB_URL}/${req.params.id}`);
+    if (!response.ok) return res.status(404).json({ msn: "Usuario no encontrado" });
+    res.status(200).json(await response.json());
+  } catch (error) {
+    res.status(500).json({ msn: "Error de conexión" });
+  }
 };
 
-const updateUser = (req, res) => {
-  const { id } = req.params;
-  const { name, email, document } = req.body;
+const createUser = async (req, res) => {
+  const { name, email, document, role } = req.body;
+  const newUser = {
+    name, email, document,
+    role: role || "user",
+    status: "activo"
+  };
 
-  res.status(200).json({ 
-    msn: `Usuario con ID ${id} actualizado correctamente`,
-    data: { name, email, document }
-  });
+  try {
+    const response = await fetch(DB_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(newUser)
+    });
+    res.status(201).json({ msn: "Usuario creado", data: await response.json() });
+  } catch (error) {
+    res.status(500).json({ msn: "Error al crear" });
+  }
 };
 
-const deleteUser = (req, res) => {
-  const { id } = req.params;
-  
-  res.status(200).json({ 
-    msn: `Usuario con ID ${id} eliminado correctamente`
-  });
+const updateUser = async (req, res) => {
+  try {
+    const response = await fetch(`${DB_URL}/${req.params.id}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(req.body)
+    });
+    res.status(200).json({ msn: "Usuario actualizado", data: await response.json() });
+  } catch (error) {
+    res.status(500).json({ msn: "Error al actualizar" });
+  }
 };
 
-export {
-  getUsers,
-  createUser,
-  updateUser,
-  deleteUser
+const deleteUser = async (req, res) => {
+  try {
+    await fetch(`${DB_URL}/${req.params.id}`, { method: 'DELETE' });
+    res.status(200).json({ msn: "Usuario eliminado" });
+  } catch (error) {
+    res.status(500).json({ msn: "Error al eliminar" });
+  }
 };
+
+const patchUserStatus = async (req, res) => {
+  try {
+    const response = await fetch(`${DB_URL}/${req.params.id}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ status: req.body.status })
+    });
+    res.status(200).json({ msn: "Estado actualizado", data: await response.json() });
+  } catch (error) {
+    res.status(500).json({ msn: "Error al cambiar estado" });
+  }
+};
+
+export { getUsers, getUserById, createUser, updateUser, deleteUser, patchUserStatus };
