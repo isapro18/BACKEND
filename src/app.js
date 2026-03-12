@@ -15,6 +15,10 @@ app.use('/api/auth', authRoutes);
 app.use('/api/users', userRoutes);
 app.use('/api/tasks', taskRoutes);
 
+app.get('/', (req, res) => {
+  res.status(200).json({ msn: "Servidor Express funcionando correctamente" });
+}); 
+
 app.listen(PORT, () => {
     console.log(`Server running on port ${PORT}`);
 });

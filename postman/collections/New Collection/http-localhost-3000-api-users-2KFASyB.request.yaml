@@ -1,0 +1,9 @@
+$kind: http-request
+name: http://localhost:3000/api/users/2KFASyB
+url: http://localhost:3000/api/users/2KFASyB
+method: DELETE
+auth:
+  type: bearer
+  credentials:
+    token: token-10-admin
+order: 1773279308164
