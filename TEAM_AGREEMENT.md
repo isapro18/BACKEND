@@ -8,7 +8,7 @@ Este documento establece las reglas de convivencia, comunicación y estándares 
 | :---------------------------------- | :------------------ | :------------------ |
 | [Andres Santiago Calvete Lesmes]    | Líder (Arquitecto) | `@Nano5402`       |
 | Fernando Andres Rodriguez Salamanca | Desarrollador       | `@FeRodriguezAut` |
-| [Nombre del Aprendiz 3]             | Desarrollador       | `@usuario3`       |
+| Ana Isabella Garcia Rozo             | Desarrolladora     | `@isapro18`       |
 
 ## 2. Canales de Comunicación
 
