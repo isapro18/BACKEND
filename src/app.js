@@ -1,5 +1,8 @@
 import express from 'express';
 import cors from 'cors';
+import 'dotenv/config'; // Carga las variables de entorno (.env) automáticamente
+import './config/db.js'; // Inicializa y prueba la conexión a MySQL
+
 import userRoutes from './routes/users.routes.js';
 import taskRoutes from './routes/tasks.routes.js';
 import authRoutes from './routes/auth.routes.js';
@@ -9,7 +12,8 @@ app.use(cors());
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
-const PORT = 3000;
+// Usar el puerto del .env o el 3000 por defecto
+const PORT = process.env.PORT || 3000; 
 
 // Rutas base con el prefijo exigido
 app.use('/api/auth', authRoutes);
