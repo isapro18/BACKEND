@@ -1,3 +1,5 @@
+import jwt from 'jsonwebtoken';
+
 const verifyToken = (req, res, next) => {
     const authHeader = req.headers.authorization;
     
@@ -5,24 +7,26 @@ const verifyToken = (req, res, next) => {
         return res.status(401).json({ msn: "Acceso denegado. Token no proporcionado." });
     }
 
-    const token = authHeader.split(' ')[1]; // Ej: "token-10-admin"
+    const token = authHeader.split(' ')[1]; 
     
     try {
-        // Desarmamos el token simulado para extraer el ID y el Rol
-        const partes = token.split('-'); 
-        req.user = {
-            id: partes[1],
-            role: partes[2]
-        };
-        next(); // Pasa a la siguiente función
+        // VERIFICACIÓN REAL: Usamos la llave secreta del .env para desencriptar
+        const decoded = jwt.verify(token, process.env.JWT_SECRET);
+        
+        // Inyectamos los datos del usuario (id y role) en la petición
+        req.user = decoded; 
+        
+        next(); 
     } catch (error) {
-        res.status(403).json({ msn: "Token inválido." });
+        // Si el token expiró o es falso, entrará aquí
+        return res.status(403).json({ msn: "Token inválido o expirado." });
     }
 };
 
 // Verificación exclusiva para administradores
 const isAdmin = (req, res, next) => {
-    if (req.user.role !== 'admin') {
+    // Verificamos que el rol inyectado sea exactamente 'admin'
+    if (!req.user || req.user.role !== 'admin') {
         return res.status(403).json({ msn: "Acceso denegado. Se requieren permisos de administrador." });
     }
     next();

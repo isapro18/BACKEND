@@ -1,78 +1,56 @@
-const DB_URL = 'http://localhost:4000/users';
+import pool from '../config/db.js';
 
-const getUsers = async (req, res) => {
+export const getUsers = async (req, res) => {
   try {
-    const response = await fetch(DB_URL);
-    const data = await response.json();
-    res.status(200).json(data);
-  } catch (error) {
-    res.status(500).json({ msn: "Error al obtener usuarios" });
-  }
+    const [rows] = await pool.query('SELECT * FROM users');
+    res.status(200).json(rows);
+  } catch (error) { res.status(500).json({ msn: "Error al obtener usuarios" }); }
 };
 
-const getUserById = async (req, res) => {
+export const getUserById = async (req, res) => {
   try {
-    const response = await fetch(`${DB_URL}/${req.params.id}`);
-    if (!response.ok) return res.status(404).json({ msn: "Usuario no encontrado" });
-    res.status(200).json(await response.json());
-  } catch (error) {
-    res.status(500).json({ msn: "Error de conexión" });
-  }
+    const [rows] = await pool.query('SELECT * FROM users WHERE id = ?', [req.params.id]);
+    if (rows.length === 0) return res.status(404).json({ msn: "Usuario no encontrado" });
+    res.status(200).json(rows[0]);
+  } catch (error) { res.status(500).json({ msn: "Error al buscar el usuario" }); }
 };
 
-const createUser = async (req, res) => {
+export const createUser = async (req, res) => {
   const { name, email, document, role } = req.body;
-  const newUser = {
-    name, email, document,
-    role: role || "user",
-    status: "activo"
-  };
-
   try {
-    const response = await fetch(DB_URL, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(newUser)
-    });
-    res.status(201).json({ msn: "Usuario creado", data: await response.json() });
-  } catch (error) {
-    res.status(500).json({ msn: "Error al crear" });
-  }
+    const [result] = await pool.query(
+      'INSERT INTO users (name, email, document, role, status) VALUES (?, ?, ?, ?, ?)',
+      [name, email, document, role || 'user', 'activo']
+    );
+    res.status(201).json({ msn: "Usuario creado con éxito", id: result.insertId });
+  } catch (error) { res.status(500).json({ msn: "Error al crear usuario" }); }
 };
 
-const updateUser = async (req, res) => {
+export const updateUser = async (req, res) => {
+  const { name, email, document, role } = req.body;
   try {
-    const response = await fetch(`${DB_URL}/${req.params.id}`, {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(req.body)
-    });
-    res.status(200).json({ msn: "Usuario actualizado", data: await response.json() });
-  } catch (error) {
-    res.status(500).json({ msn: "Error al actualizar" });
-  }
+    const [result] = await pool.query(
+      'UPDATE users SET name = ?, email = ?, document = ?, role = ? WHERE id = ?',
+      [name, email, document, role, req.params.id]
+    );
+    if (result.affectedRows === 0) return res.status(404).json({ msn: "Usuario no encontrado" });
+    res.status(200).json({ msn: "Usuario actualizado" });
+  } catch (error) { res.status(500).json({ msn: "Error al actualizar" }); }
 };
 
-const deleteUser = async (req, res) => {
+// Borrado Lógico
+export const deleteUser = async (req, res) => {
   try {
-    await fetch(`${DB_URL}/${req.params.id}`, { method: 'DELETE' });
-    res.status(200).json({ msn: "Usuario eliminado" });
-  } catch (error) {
-    res.status(500).json({ msn: "Error al eliminar" });
-  }
+    const [result] = await pool.query("UPDATE users SET status = 'inactivo' WHERE id = ?", [req.params.id]);
+    if (result.affectedRows === 0) return res.status(404).json({ msn: "Usuario no encontrado" });
+    res.status(200).json({ msn: "Usuario desactivado correctamente" });
+  } catch (error) { res.status(500).json({ msn: "Error al desactivar" }); }
 };
 
-const patchUserStatus = async (req, res) => {
+export const patchUserStatus = async (req, res) => {
   try {
-    const response = await fetch(`${DB_URL}/${req.params.id}`, {
-      method: 'PATCH',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ status: req.body.status })
-    });
-    res.status(200).json({ msn: "Estado actualizado", data: await response.json() });
-  } catch (error) {
-    res.status(500).json({ msn: "Error al cambiar estado" });
-  }
+    const [result] = await pool.query('UPDATE users SET status = ? WHERE id = ?', [req.body.status, req.params.id]);
+    if (result.affectedRows === 0) return res.status(404).json({ msn: "Usuario no encontrado" });
+    res.status(200).json({ msn: "Estado actualizado" });
+  } catch (error) { res.status(500).json({ msn: "Error al cambiar estado" }); }
 };
-
-export { getUsers, getUserById, createUser, updateUser, deleteUser, patchUserStatus };

@@ -5,10 +5,10 @@ import { verifyToken, isAdmin } from '../middlewares/auth.middleware.js';
 
 const usersRouter = express.Router();
 
-// RUTA DE FER: Ver mis tareas (Solo requiere estar logueado, no admin)
+// RUTA DE FER: Ver mis tareas (Cualquier usuario logueado)
 usersRouter.get('/:userId/tasks', verifyToken, getTasksByUser);
 
-// CRUD DE USUARIOS (Requiere Admin obligatoriamente)
+// CRUD DE USUARIOS (Solo Admin)
 usersRouter.get('/', verifyToken, isAdmin, getUsers);
 usersRouter.get('/:id', verifyToken, isAdmin, getUserById);
 usersRouter.post('/', verifyToken, isAdmin, createUser);

@@ -1,243 +1,184 @@
-const DB_URL = 'http://localhost:4000/tasks';
-const USERS_DB_URL = 'http://localhost:4000/users';
+import pool from '../config/db.js';
 
-const getTasks = async (req, res) => {
+// 1. Obtener todas las tareas
+export const getTasks = async (req, res) => {
   try {
-    const response = await fetch(DB_URL);
-    res.status(200).json(await response.json());
+    const [rows] = await pool.query('SELECT * FROM tasks');
+    res.status(200).json(rows);
   } catch (error) {
     res.status(500).json({ msn: "Error al obtener tareas" });
   }
 };
 
-const getTaskById = async (req, res) => {
+// 2. Obtener tarea por ID
+export const getTaskById = async (req, res) => {
   try {
-    const response = await fetch(`${DB_URL}/${req.params.id}`);
-    if (!response.ok) return res.status(404).json({ msn: "Tarea no encontrada" });
-    res.status(200).json(await response.json());
+    const [rows] = await pool.query('SELECT * FROM tasks WHERE id = ?', [req.params.id]);
+    if (rows.length === 0) return res.status(404).json({ msn: "Tarea no encontrada" });
+    res.status(200).json(rows[0]);
   } catch (error) {
     res.status(500).json({ msn: "Error al obtener la tarea" });
   }
 };
 
-const createTask = async (req, res) => {
-  const { title, body, userIds } = req.body; 
+export const createTask = async (req, res) => {
+  const { title, description, userIds } = req.body; 
   
-  const newTask = {
-    title,
-    body,
-    userIds: userIds || [], // Array de IDs
-    status: "pendiente"
-  };
-
   try {
-    const response = await fetch(DB_URL, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(newTask)
-    });
-    res.status(201).json({ msn: "Tarea creada", data: await response.json() });
-  } catch (error) {
-    res.status(500).json({ msn: "Error al crear tarea" });
-  }
-};
-
-const updateTask = async (req, res) => {
-  try {
-    const response = await fetch(`${DB_URL}/${req.params.id}`, {
-      method: 'PATCH',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(req.body)
-    });
-    if (!response.ok) {
-      return res.status(404).json({ msn: "La tarea no existe" });
+    // Si mandaron un arreglo con varios estudiantes (ej: [1, 3, 6, 8])
+    if (userIds && userIds.length > 0) {
+      
+      // Armamos un arreglo múltiple para MySQL
+      const values = userIds.map(id => [title, description, 'pendiente', id]);
+      
+      // Insertamos todas las copias de un solo golpe (Multi-Insert)
+      const [result] = await pool.query(
+        'INSERT INTO tasks (title, description, status, userId) VALUES ?',
+        [values]
+      );
+      
+      return res.status(201).json({ 
+        msn: `Tarea clonada y asignada a ${userIds.length} estudiantes exitosamente`,
+        tareasCreadas: result.affectedRows 
+      });
+      
+    } else {
+      // Si mandaron el arreglo vacío, creamos una tarea "huérfana" (sin asignar)
+      const [result] = await pool.query(
+        'INSERT INTO tasks (title, description, status, userId) VALUES (?, ?, ?, NULL)',
+        [title, description, 'pendiente']
+      );
+      
+      return res.status(201).json({ msn: "Tarea creada sin asignar", id: result.insertId });
     }
-    res.status(200).json({ msn: "Tarea actualizada", data: await response.json() });
-  } catch (error) {
-    res.status(500).json({ msn: "Error al actualizar tarea" });
+  } catch (error) { 
+    console.error(error);
+    res.status(500).json({ msn: "Error al crear la tarea masiva" }); 
   }
 };
 
-const deleteTask = async (req, res) => {
+// 4. Actualizar tarea completa
+export const updateTask = async (req, res) => {
+  const { title, description } = req.body;
   try {
-    await fetch(`${DB_URL}/${req.params.id}`, { method: 'DELETE' });
-    res.status(200).json({ msn: "Tarea eliminada correctamente" });
+    const [result] = await pool.query(
+      'UPDATE tasks SET title = ?, description = ? WHERE id = ?',
+      [title, description, req.params.id]
+    );
+    if (result.affectedRows === 0) return res.status(404).json({ msn: "Tarea no encontrada" });
+    res.status(200).json({ msn: "Tarea actualizada" });
   } catch (error) {
-    res.status(500).json({ msn: "Error al eliminar tarea" });
+    res.status(500).json({ msn: "Error al actualizar" });
   }
 };
 
-// --- TUS ENDPOINTS DE ASIGNACIÓN MÚLTIPLE ---
-const assignTaskToUsers = async (req, res) => {
-  const { taskId } = req.params;
-  const { userIds } = req.body; 
-
+// 5. Eliminar tarea
+export const deleteTask = async (req, res) => {
   try {
-    const taskRes = await fetch(`${DB_URL}/${taskId}`);
-    if (!taskRes.ok) return res.status(404).json({ msn: "Tarea no encontrada" });
-    const task = await taskRes.json();
-
-    const currentUsers = task.userIds || [];
-    const updatedUserIds = [...new Set([...currentUsers, ...userIds])];
-
-    const updateRes = await fetch(`${DB_URL}/${taskId}`, {
-      method: 'PATCH',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ userIds: updatedUserIds })
-    });
-
-    res.status(200).json({ msn: "Usuarios asignados", data: await updateRes.json() });
+    const [result] = await pool.query('DELETE FROM tasks WHERE id = ?', [req.params.id]);
+    if (result.affectedRows === 0) return res.status(404).json({ msn: "Tarea no encontrada" });
+    res.status(200).json({ msn: "Tarea eliminada" });
   } catch (error) {
-    res.status(500).json({ msn: "Error al asignar usuarios" });
+    res.status(500).json({ msn: "Error al eliminar" });
   }
 };
 
-const getTaskUsers = async (req, res) => {
-  const { taskId } = req.params;
-
+// 6. Cambiar estado de la tarea (patchTaskStatus)
+export const patchTaskStatus = async (req, res) => {
+  const { status } = req.body;
   try {
-    const taskRes = await fetch(`${DB_URL}/${taskId}`);
-    if (!taskRes.ok) return res.status(404).json({ msn: "Tarea no encontrada" });
-    const task = await taskRes.json();
-
-    if (!task.userIds || task.userIds.length === 0) return res.status(200).json([]);
-
-    const query = task.userIds.map(id => `id=${id}`).join('&');
-    const usersRes = await fetch(`${USERS_DB_URL}?${query}`);
-    
-    res.status(200).json(await usersRes.json());
+    const [result] = await pool.query('UPDATE tasks SET status = ? WHERE id = ?', [status, req.params.id]);
+    if (result.affectedRows === 0) return res.status(404).json({ msn: "Tarea no encontrada" });
+    res.status(200).json({ msn: "Estado actualizado" });
   } catch (error) {
-    res.status(500).json({ msn: "Error al obtener usuarios asignados" });
+    res.status(500).json({ msn: "Error al actualizar estado" });
   }
 };
 
-const removeUserFromTask = async (req, res) => {
-  const { taskId, userId } = req.params;
-
+// 7. Dashboard Global
+export const getDashboard = async (req, res) => {
   try {
-    const taskRes = await fetch(`${DB_URL}/${taskId}`);
-    if (!taskRes.ok) return res.status(404).json({ msn: "Tarea no encontrada" });
-    const task = await taskRes.json();
-
-    const updatedUserIds = (task.userIds || []).filter(id => String(id) !== String(userId));
-
-    const updateRes = await fetch(`${DB_URL}/${taskId}`, {
-      method: 'PATCH',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ userIds: updatedUserIds })
-    });
-
-    res.status(200).json({ msn: `Usuario removido`, data: await updateRes.json() });
-  } catch (error) {
-    res.status(500).json({ msn: "Error al remover usuario" });
-  }
-};
-
-// --- REQUERIMIENTOS DE FERNANDO ---
-const filterTasks = async (req, res) => {
-  try {
-    const { userId, status } = req.query; 
-    
-    const response = await fetch(DB_URL);
-    let tasks = await response.json();
-
-    if (userId) {
-      tasks = tasks.filter(task => task.userIds && task.userIds.includes(String(userId)));
-    }
-    if (status) {
-      tasks = tasks.filter(task => task.status === status);
-    }
-
-    res.status(200).json({ 
-      msn: "Filtro aplicado", 
-      cantidad: tasks.length, 
-      data: tasks 
-    });
-  } catch (error) {
-    res.status(500).json({ msn: "Error interno al filtrar las tareas" });
-  }
-};
-
-const getTasksByUser = async (req, res) => {
-  try {
-    const { userId } = req.params;
-    
-    const response = await fetch(DB_URL);
-    const allTasks = await response.json();
-
-    const userTasks = allTasks.filter(task => task.userIds && task.userIds.includes(String(userId)));
-
-    if (userTasks.length === 0) {
-      return res.status(404).json({ msn: "Este usuario no tiene tareas asignadas" });
-    }
-
-    res.status(200).json(userTasks);
-  } catch (error) {
-    res.status(500).json({ msn: "Error al obtener las tareas del usuario" });
-  }
-};
-
-// --- REQUERIMIENTOS DE ISA ---
-
-// 1. Cambiar solo el estado de la tarea (PATCH)
-const patchTaskStatus = async (req, res) => {
-  try {
-    const { id } = req.params;
-    const { status } = req.body;
-
-    const validStatuses = ['pendiente', 'en progreso', 'completada'];
-    if (!status || !validStatuses.includes(status)) {
-      return res.status(400).json({ msn: "Estado inválido. Use: pendiente, en progreso o completada" });
-    }
-
-    const response = await fetch(`${DB_URL}/${id}`, {
-      method: 'PATCH',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ status })
-    });
-
-    if (!response.ok) return res.status(404).json({ msn: "Tarea no encontrada" });
-    
-    res.status(200).json({ msn: "Estado actualizado", data: await response.json() });
-  } catch (error) {
-    res.status(500).json({ msn: "Error interno al actualizar estado" });
-  }
-};
-
-// 2. Dashboard global opcional (GET)
-const getDashboard = async (req, res) => {
-  try {
-    const [usersRes, tasksRes] = await Promise.all([
-      fetch(USERS_DB_URL),
-      fetch(DB_URL)
-    ]);
-
-    const users = await usersRes.json();
-    const tasks = await tasksRes.json();
-
-    // Filtramos solo los estudiantes (IDs del 1 al 9 según la lógica de tu frontend)
-    const estudiantes = users.filter(u => Number(u.id) >= 1 && Number(u.id) <= 9);
+    const [users] = await pool.query("SELECT * FROM users WHERE role = 'user' AND status = 'activo'");
+    const [tasks] = await pool.query('SELECT * FROM tasks');
 
     const resumen = {
       estadisticas: {
-        totalEstudiantes: estudiantes.length,
+        totalEstudiantes: users.length,
         totalTareas: tasks.length,
         pendientes: tasks.filter(t => t.status === 'pendiente').length,
         enProgreso: tasks.filter(t => t.status === 'en progreso').length,
         completadas: tasks.filter(t => t.status === 'completada').length
       },
-      usuarios: estudiantes,
+      usuarios: users,
       tareasGlobales: tasks
     };
-
     res.status(200).json(resumen);
   } catch (error) {
-    res.status(500).json({ msn: "Error al generar el dashboard" });
+    res.status(500).json({ msn: "Error al cargar dashboard" });
   }
 };
 
-export {
-  getTasks, getTaskById, createTask, updateTask, deleteTask,
-  assignTaskToUsers, getTaskUsers, removeUserFromTask, filterTasks, getTasksByUser,
-  patchTaskStatus, getDashboard
+// 8. Filtrar tareas (filterTasks)
+export const filterTasks = async (req, res) => {
+  const { status } = req.query;
+  try {
+    let query = 'SELECT * FROM tasks';
+    const params = [];
+    if (status) {
+      query += ' WHERE status = ?';
+      params.push(status);
+    }
+    const [rows] = await pool.query(query, params);
+    res.status(200).json(rows);
+  } catch (error) {
+    res.status(500).json({ msn: "Error al filtrar" });
+  }
+};
+
+// 9. Asignar usuarios a tarea (assignTaskToUsers)
+export const assignTaskToUsers = async (req, res) => {
+  const { userIds } = req.body;
+  const taskId = req.params.taskId;
+  try {
+    if (userIds && userIds.length > 0) {
+      await pool.query('UPDATE tasks SET userId = ? WHERE id = ?', [userIds[0], taskId]);
+    }
+    res.status(200).json({ msn: "Usuario asignado a la tarea" });
+  } catch (error) {
+    res.status(500).json({ msn: "Error al asignar" });
+  }
+};
+
+// 10. Obtener usuarios de una tarea (getTaskUsers)
+export const getTaskUsers = async (req, res) => {
+  try {
+    const [task] = await pool.query('SELECT userId FROM tasks WHERE id = ?', [req.params.taskId]);
+    if (task.length === 0 || !task[0].userId) {
+      return res.status(200).json([]);
+    }
+    const [user] = await pool.query('SELECT id, name, email FROM users WHERE id = ?', [task[0].userId]);
+    res.status(200).json(user);
+  } catch (error) {
+    res.status(500).json({ msn: "Error al obtener usuarios de la tarea" });
+  }
+};
+
+// 11. Remover usuario de la tarea (removeUserFromTask)
+export const removeUserFromTask = async (req, res) => {
+  try {
+    await pool.query('UPDATE tasks SET userId = NULL WHERE id = ? AND userId = ?', [req.params.taskId, req.params.userId]);
+    res.status(200).json({ msn: "Usuario removido de la tarea" });
+  } catch (error) {
+    res.status(500).json({ msn: "Error al remover" });
+  }
+};
+
+// 12. Tareas por usuario (La ruta de Fer)
+export const getTasksByUser = async (req, res) => {
+  try {
+    const [rows] = await pool.query('SELECT * FROM tasks WHERE userId = ?', [req.params.userId]);
+    res.status(200).json(rows);
+  } catch (error) {
+    res.status(500).json({ msn: "Error al obtener las tareas del usuario" });
+  }
 };

@@ -1,35 +1,37 @@
-const DB_URL = 'http://localhost:4000/users'; 
+import pool from '../config/db.js';
+import jwt from 'jsonwebtoken';
 
 const login = async (req, res) => {
-  const { document, password } = req.body;
+  // 1. Extraemos SOLO el documento, que es lo único que envía el Frontend
+  const { document } = req.body;
 
-  if (!document || !password) {
-    return res.status(400).json({ msn: "El documento y la contraseña son obligatorios" });
-  }
-
-  const lastFourDigits = String(document).slice(-4);
-  
-  if (password !== lastFourDigits) {
-    return res.status(401).json({ msn: "Credenciales incorrectas" });
+  if (!document) {
+    return res.status(400).json({ msn: "El documento es obligatorio para iniciar sesión" });
   }
 
   try {
-    const response = await fetch(`${DB_URL}?document=${document}`);
-    const users = await response.json();
+    // 2. Buscamos al usuario en nuestra nueva base de datos MySQL
+    const [users] = await pool.query('SELECT * FROM users WHERE document = ?', [document]);
 
+    // Si el arreglo viene vacío, el usuario no existe
     if (users.length === 0) {
-      return res.status(404).json({ msn: "Usuario no encontrado" });
+      return res.status(404).json({ msn: "Usuario no encontrado en el sistema" });
     }
 
+    // 3. Seleccionamos al usuario encontrado
     const user = users[0];
 
-    if (user.status !== "activo") {
-      return res.status(403).json({ msn: "Usuario inactivo. Contacte al administrador." });
-    }
+    // 4. Firmamos el Token JWT usando la llave secreta de nuestro .env
+    const payload = {
+      id: user.id,
+      role: user.role
+    };
 
-    // El token incluye el ID y el Rol para que el Middleware los pueda leer
-    const token = `token-${user.id}-${user.role}`;
+    const token = jwt.sign(payload, process.env.JWT_SECRET, {
+      expiresIn: '2h' // El token durará 2 horas
+    });
 
+    // 5. Devolvemos el pase VIP al Frontend
     res.status(200).json({
       msn: "Autenticación exitosa",
       token: token,
@@ -41,7 +43,8 @@ const login = async (req, res) => {
     });
 
   } catch (error) {
-    res.status(500).json({ msn: "Error interno del servidor" });
+    console.error("Error en el login:", error);
+    res.status(500).json({ msn: "Error interno del servidor al conectar con la base de datos" });
   }
 };
 
