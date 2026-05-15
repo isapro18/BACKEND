@@ -1,17 +1,18 @@
--- 1. CREACIÓN DEL USUARIO DEL SISTEMA
--- (Ejecutar como root)
 CREATE USER IF NOT EXISTS 'nano'@'localhost' IDENTIFIED BY 'admin123';
 
--- 2. CREACIÓN DE LA BASE DE DATOS
 CREATE DATABASE IF NOT EXISTS taskAppDb;
 
--- 3. ASIGNACIÓN DE PRIVILEGIOS
 GRANT ALL PRIVILEGES ON taskAppDb.* TO 'nano'@'localhost';
 FLUSH PRIVILEGES;
 
 USE taskAppDb;
 
--- 4. ESTRUCTURA RBAC (TABLAS)
+-- 1. DESTRUCCIÓN Y RECREACIÓN LIMPIA
+DROP DATABASE IF EXISTS taskAppDb;
+CREATE DATABASE taskAppDb CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+USE taskAppDb;
+
+-- 2. ESTRUCTURA RBAC
 CREATE TABLE roles (
     id INT AUTO_INCREMENT PRIMARY KEY,
     name VARCHAR(50) NOT NULL UNIQUE,
@@ -40,6 +41,8 @@ CREATE TABLE users (
     password VARCHAR(255) NOT NULL,
     status ENUM('activo', 'inactivo') DEFAULT 'activo',
     role_id INT NOT NULL,
+    otp_code VARCHAR(6) NULL,
+    otp_expires_at DATETIME NULL,
     createdAt TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY (role_id) REFERENCES roles(id)
 );
@@ -48,39 +51,51 @@ CREATE TABLE tasks (
     id INT AUTO_INCREMENT PRIMARY KEY,
     title VARCHAR(255) NOT NULL,
     description TEXT,
-    status ENUM('pendiente', 'en progreso', 'completada') DEFAULT 'pendiente',
+    status ENUM('pendiente', 'en progreso', 'completada', 'incompleta') NOT NULL DEFAULT 'pendiente',
     userId INT NOT NULL,
     createdAt TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY (userId) REFERENCES users(id) ON DELETE CASCADE
 );
 
--- 5. POBLACIÓN (ROLES Y PERMISOS)
+CREATE TABLE audit_logs (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    action VARCHAR(50) NOT NULL,
+    reason TEXT NOT NULL,
+    target_user_id INT, 
+    target_user_name VARCHAR(255),
+    performed_by INT, 
+    createdAt TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (performed_by) REFERENCES users(id) ON DELETE SET NULL
+);
+
+-- 3. POBLACIÓN DE ROLES Y PERMISOS
 INSERT INTO roles (name, description) VALUES
-('SuperAdmin', 'Control total'), ('Profesor', 'Gestor'), ('Estudiante', 'Colaborador'), ('Auditor', 'Invitado');
+('SuperAdmin', 'Control total'), 
+('Profesor', 'Gestor de tareas'), 
+('Estudiante', 'Colaborador base'), 
+('Auditor', 'Invitado lectura');
 
 INSERT INTO permissions (name, description) VALUES
-('system.manage.all', 'Gestión total'), ('users.create', 'Crear usuarios'), ('users.read.all', 'Leer usuarios'),
-('users.update.status', 'Estado usuarios'), ('tasks.create.multiple', 'Tareas masivas'), ('tasks.read.all', 'Ver todo'),
-('tasks.update.all', 'Editar todo'), ('tasks.delete.all', 'Borrar todo'), ('tasks.read.own', 'Ver propias'),
-('tasks.update.status.own', 'Gestionar propias');
+('system.manage.all', 'Gestión total'), 
+('users.create', 'Crear usuarios'), 
+('users.read.all', 'Leer usuarios'),
+('users.update.status', 'Estado usuarios'), 
+('tasks.create.multiple', 'Tareas masivas'), 
+('tasks.read.all', 'Ver todo'),
+('tasks.update.all', 'Editar todo'), 
+('tasks.delete.all', 'Borrar todo'), 
+('tasks.read.own', 'Ver propias'),
+('tasks.update.status.own', 'Gestionar propias'),
+('system.audit', 'Auditoría del sistema');
 
--- Asignar permisos a SuperAdmin, Profesor y Estudiante
+-- Asignación de Permisos
+-- SuperAdmin (Todos los permisos)
 INSERT INTO role_permissions (role_id, permission_id) SELECT 1, id FROM permissions;
+-- Profesor
 INSERT INTO role_permissions (role_id, permission_id) VALUES (2, 2), (2, 3), (2, 4), (2, 5), (2, 6), (2, 7), (2, 8);
+-- Estudiante
 INSERT INTO role_permissions (role_id, permission_id) VALUES (3, 9), (3, 10);
+-- Auditor
+INSERT INTO role_permissions (role_id, permission_id) VALUES (4, 3), (4, 6), (4, 11);
 
--- 6. POBLACIÓN DE USUARIOS
-INSERT INTO users (name, email, document, password, role_id) VALUES 
-('Andrés Santiago Calvete Lesmes', 'santiagocalvete69@gmail.com', '1097789129', '9129', 1),
-('John Becerra', 'john.becerra@sena.edu.co', '1095000001', '0001', 2),
-('Ana Isabella', 'ana.i@sena.edu.co', '1098765432', '5432', 3),
-('Karol Nicolle', 'karol.n@sena.edu.co', '1095000002', '0002', 3),
-('Jhon Bueno', 'jhon.bueno@sena.edu.co', '1095000003', '0003', 3),
-('Dario Herrera', 'dario.h@sena.edu.co', '1095000004', '0004', 3),
-('Paulo Pacheco', 'paulo.p@sena.edu.co', '1095000005', '0005', 3),
-('Sebastian Patillas', 'sebastian.p@sena.edu.co', '1095000006', '0006', 3),
-('Manuel Serrano', 'manuel.s@sena.edu.co', '1095000007', '0007', 3),
-('Fernando Rodriguez', 'fernando.r@sena.edu.co', '1095000008', '0008', 3),
-('Carlos Mario', 'carlos.m@sena.edu.co', '1095000009', '0009', 3),
-('Daniela Valentina', 'daniela.v@sena.edu.co', '1095000010', '0010', 3),
-('Invitado Auditor', 'auditor@sena.edu.co', '9999999999', '9999', 4);
+-- Nota: La tabla `users` está deliberadamente vacía para el auto-registro del SuperAdmin.
