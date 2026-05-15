@@ -1,0 +1,12 @@
+feat(backend): implementa Mailtrap OTP, RBAC atomico y documenta todos los modulos
+
+- Agrega utils/email.js con sendOTPEmail() via Mailtrap Sandbox usando Fetch nativo
+- Implementa flujo OTP completo: forgot-password, verify-otp y reset-password
+- Agrega checkPermissionAny() en tasks.routes.js para aceptar TASKS_READ_ALL o TASKS_READ_OWN
+- Corrige orden de rutas en tasks.routes.js: /filter y /dashboard antes de /:id
+- Corrige orden de rutas en users.routes.js: /audit/logs antes de /:id
+- Agrega permisos atomicos al payload JWT en login: array permissions[] por rol
+- Agrega .env.example con variables requeridas documentadas
+- Agrega db_script.sql con estructura completa de la base de datos
+- Agrega docs/evidencias/rbac.md con matriz de roles y permisos
+- Documenta todos los modulos con cabeceras ASCII y JSDoc completo
