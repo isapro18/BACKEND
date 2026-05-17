@@ -165,12 +165,20 @@ export const updateUser = catchAsync(async (req, res) => {
 //  enviando siempre el ID del usuario en sesión.)
 // =============================================================================
 export const getUserTasks = catchAsync(async (req, res) => {
-    const [rows] = await pool.query(
-        'SELECT * FROM tasks WHERE userId = ?', [req.params.id]
-    );
+    const [rows] = await pool.query(`
+        SELECT
+            t.id,
+            t.title,
+            t.description,
+            t.createdAt,
+            ut.status
+        FROM user_tasks ut
+        JOIN tasks t ON ut.task_id = t.id
+        WHERE ut.user_id = ?
+        ORDER BY t.id DESC
+    `, [req.params.id]);
     return successResponse(res, 200, "Tareas del usuario obtenidas", rows);
 });
-
 // =============================================================================
 // DELETE USER — DELETE /api/users/:id
 // Requiere: SYSTEM_MANAGE_ALL (solo SuperAdmin)

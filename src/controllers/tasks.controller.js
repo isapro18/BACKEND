@@ -2,28 +2,27 @@
  * ╔══════════════════════════════════════════════════════════════════════╗
  * ║  tasks.controller.js — CONTROLADOR DE TAREAS                        ║
  * ║                                                                      ║
- * ║  Gestiona el ciclo de vida completo de las tareas del sistema:      ║
- * ║  creación, asignación, consulta, actualización y eliminación.       ║
+ * ║  Gestiona el ciclo de vida completo de las tareas del sistema.      ║
+ * ║                                                                      ║
+ * ║  MODELO DE DATOS (muchos a muchos):                                 ║
+ * ║    tasks      → almacena título y descripción (sin estado ni userId) ║
+ * ║    user_tasks → tabla pivote: (task_id, user_id, status)            ║
+ * ║                 Cada fila = una asignación con su propio estado     ║
  * ║                                                                      ║
  * ║  FUNCIONES EXPORTADAS:                                               ║
  * ║                                                                      ║
- * ║  getTasks          → Lista todas las tareas del sistema             ║
- * ║  getTaskById       → Obtiene una tarea por su ID                   ║
- * ║  createTask        → Crea y asigna tarea(s) a uno o varios         ║
- * ║                       usuarios (asignación masiva con userIds[])    ║
- * ║  updateTask        → Actualiza campos seleccionados de una tarea   ║
- * ║                       (query dinámica, no pisa campos vacíos)       ║
- * ║  deleteTask        → Elimina una tarea de la BD                    ║
- * ║  patchTaskStatus   → Cambia solo el campo status de una tarea      ║
- * ║  getTasksByUser    → Lista todas las tareas asignadas a un usuario  ║
- * ║  filterTasks       → Filtra tareas por estado desde query param     ║
- * ║  getDashboard      → Devuelve métricas globales (total/estado)      ║
- * ║  assignTaskToUsers → Reasigna una tarea existente a otro usuario   ║
- * ║  getTaskUsers      → Obtiene el usuario asignado a una tarea       ║
- * ║  removeUserFromTask→ Desvincula un usuario de una tarea (userId=NULL)║
- * ║                                                                      ║
- * ║  ESTADOS VÁLIDOS DE UNA TAREA:                                      ║
- * ║    "pendiente" → "en progreso" → "completada" | "incompleta"       ║
+ * ║  getTasks          → Lista tareas con sus usuarios asignados        ║
+ * ║  getTaskById       → Obtiene una tarea con sus asignaciones         ║
+ * ║  createTask        → Crea la tarea e inserta en user_tasks          ║
+ * ║  updateTask        → Actualiza título y/o descripción de la tarea   ║
+ * ║  deleteTask        → Elimina la tarea (CASCADE borra user_tasks)    ║
+ * ║  patchTaskStatus   → Cambia el status en user_tasks para ese usuario║
+ * ║  getTasksByUser    → Tareas asignadas a un usuario con su estado    ║
+ * ║  filterTasks       → Filtra por estado en user_tasks                ║
+ * ║  getDashboard      → Métricas globales desde user_tasks             ║
+ * ║  assignTaskToUsers → Inserta nuevas filas en user_tasks             ║
+ * ║  getTaskUsers      → Usuarios asignados a una tarea                 ║
+ * ║  removeUserFromTask→ Borra la fila de user_tasks                    ║
  * ╚══════════════════════════════════════════════════════════════════════╝
  */
 
@@ -33,100 +32,119 @@ import { successResponse } from '../utils/response.handler.js';
 
 // =============================================================================
 // GET TASKS — GET /api/tasks
-// Devuelve todas las tareas registradas en el sistema.
-// Requiere: TASKS_READ_ALL o TASKS_READ_OWN (ver tasks.routes.js)
+// Devuelve todas las tareas con la lista de usuarios asignados y sus estados.
+// Usa LEFT JOIN para incluir tareas aunque no tengan asignaciones aún.
 // =============================================================================
 export const getTasks = catchAsync(async (req, res) => {
-    const [rows] = await pool.query('SELECT * FROM tasks');
+    const [rows] = await pool.query(`
+        SELECT
+            t.id,
+            t.title,
+            t.description,
+            t.createdAt,
+            ut.user_id  AS userId,
+            ut.status,
+            u.name      AS userName
+        FROM tasks t
+        LEFT JOIN user_tasks ut ON t.id = ut.task_id
+        LEFT JOIN users u       ON ut.user_id = u.id
+        ORDER BY t.id DESC
+    `);
     return successResponse(res, 200, "Tareas obtenidas correctamente", rows);
 });
 
 // =============================================================================
 // GET TASK BY ID — GET /api/tasks/:id
-// Busca una tarea específica por su ID. Responde 404 si no existe.
+// Devuelve la tarea con TODOS sus usuarios asignados y sus estados individuales.
 // =============================================================================
 export const getTaskById = catchAsync(async (req, res) => {
-    const [rows] = await pool.query('SELECT * FROM tasks WHERE id = ?', [req.params.id]);
+    const [rows] = await pool.query(`
+        SELECT
+            t.id,
+            t.title,
+            t.description,
+            t.createdAt,
+            ut.user_id AS userId,
+            ut.status,
+            u.name     AS userName
+        FROM tasks t
+        LEFT JOIN user_tasks ut ON t.id = ut.task_id
+        LEFT JOIN users u       ON ut.user_id = u.id
+        WHERE t.id = ?
+    `, [req.params.id]);
 
     if (rows.length === 0) {
         const error = new Error("Tarea no encontrada");
         error.statusCode = 404; error.isOperational = true; throw error;
     }
 
-    return successResponse(res, 200, "Tarea encontrada", rows[0]);
+    return successResponse(res, 200, "Tarea encontrada", rows);
 });
 
 // =============================================================================
 // CREATE TASK — POST /api/tasks
 // Requiere: TASKS_CREATE_MULTIPLE
 //
-// Soporta DOS modos de asignación:
-//   A) userIds (array)  → Crea UNA tarea por cada usuario del array.
-//                         Útil para asignar la misma tarea a un grupo
-//                         de estudiantes en una sola petición.
-//   B) userId (singular) → Crea una sola tarea para un usuario específico.
+// Flujo con la tabla pivote:
+//   1. Inserta UNA sola fila en tasks (título + descripción)
+//   2. Inserta UNA fila en user_tasks por cada userId del array
+//      con status = 'pendiente' por defecto
 //
-// Si no viene ninguno de los dos, responde con 400.
+// Ventaja: no se duplica el título/descripción por cada estudiante.
+// Existe una sola tarea y múltiples asignaciones con estado independiente.
 // =============================================================================
 export const createTask = catchAsync(async (req, res) => {
     const { title, description, userIds, userId } = req.body;
 
-    let tareasCreadas = 0;
+    // Normalizamos: aceptamos userIds (array) o userId (singular)
+    const listaIds = userIds?.length > 0 ? userIds : userId ? [userId] : [];
 
-    if (userIds && Array.isArray(userIds) && userIds.length > 0) {
-        // ── MODO MASIVO: una tarea por cada userId del array ─────────────────
-        for (const uid of userIds) {
-            await pool.query(
-                'INSERT INTO tasks (title, description, userId) VALUES (?, ?, ?)',
-                [title, description || null, uid]
-            );
-            tareasCreadas++;
-        }
-    } else if (userId) {
-        // ── MODO SINGULAR: una sola tarea para un usuario ────────────────────
-        await pool.query(
-            'INSERT INTO tasks (title, description, userId) VALUES (?, ?, ?)',
-            [title, description || null, userId]
-        );
-        tareasCreadas = 1;
-    } else {
+    if (listaIds.length === 0) {
         const error = new Error("Debes asignar la tarea a al menos un usuario");
         error.statusCode = 400; error.isOperational = true; throw error;
     }
 
-    return successResponse(res, 201, `Se asignaron ${tareasCreadas} tarea(s) exitosamente`);
+    // Paso 1: creamos la tarea UNA sola vez en tasks
+    const [result] = await pool.query(
+        'INSERT INTO tasks (title, description) VALUES (?, ?)',
+        [title, description || null]
+    );
+    const taskId = result.insertId;
+
+    // Paso 2: insertamos una fila en user_tasks por cada usuario asignado
+    for (const uid of listaIds) {
+        await pool.query(
+            'INSERT INTO user_tasks (task_id, user_id, status) VALUES (?, ?, ?)',
+            [taskId, uid, 'pendiente']
+        );
+    }
+
+    return successResponse(res, 201, `Tarea creada y asignada a ${listaIds.length} usuario(s) exitosamente`);
 });
 
 // =============================================================================
 // UPDATE TASK — PUT /api/tasks/:id
 // Requiere: TASKS_UPDATE_ALL
 //
-// Actualización DINÁMICA: solo se actualizan los campos que llegaron en
-// el body. Esto evita pisar datos existentes con undefined cuando el
-// instructor, por ejemplo, solo quiere rechazar (cambiar status) sin
-// tocar el título ni la descripción.
-//
-// Ejemplo: { status: "incompleta" } → solo actualiza el status.
+// Actualiza título y/o descripción de la tarea en la tabla tasks.
+// El status NO se toca aquí — vive en user_tasks por asignación.
+// Para cambiar el status usar PATCH /:id/status.
 // =============================================================================
 export const updateTask = catchAsync(async (req, res) => {
-    const { title, description, status } = req.body;
+    const { title, description } = req.body;
     const taskId = req.params.id;
 
-    // Construimos la query de forma dinámica solo con los campos recibidos
     const fields = [];
     const values = [];
 
     if (title !== undefined)       { fields.push('title = ?');       values.push(title); }
     if (description !== undefined) { fields.push('description = ?'); values.push(description); }
-    if (status !== undefined)      { fields.push('status = ?');      values.push(status); }
 
-    // Si el cliente no envió ningún campo útil, rechazamos la petición
     if (fields.length === 0) {
         const error = new Error("No se enviaron campos para actualizar");
         error.statusCode = 400; error.isOperational = true; throw error;
     }
 
-    // Agregamos el ID de la tarea al final como parámetro del WHERE
     values.push(taskId);
     const [result] = await pool.query(
         `UPDATE tasks SET ${fields.join(', ')} WHERE id = ?`,
@@ -144,7 +162,9 @@ export const updateTask = catchAsync(async (req, res) => {
 // =============================================================================
 // DELETE TASK — DELETE /api/tasks/:id
 // Requiere: TASKS_DELETE_ALL
-// Eliminación directa (hard delete). Responde 404 si no existe la tarea.
+//
+// Elimina la tarea de la tabla tasks.
+// Las filas de user_tasks se eliminan automáticamente por ON DELETE CASCADE.
 // =============================================================================
 export const deleteTask = catchAsync(async (req, res) => {
     const [result] = await pool.query('DELETE FROM tasks WHERE id = ?', [req.params.id]);
@@ -159,27 +179,30 @@ export const deleteTask = catchAsync(async (req, res) => {
 
 // =============================================================================
 // PATCH TASK STATUS — PATCH /api/tasks/:id/status
-// Requiere: solo verifyToken (cualquier usuario autenticado)
+// Requiere: solo verifyToken
 //
-// Ruta de autogestión del estudiante: le permite avanzar el estado de
-// su tarea (ej: "pendiente" → "en progreso") sin tener acceso al
-// endpoint de actualización completa (TASKS_UPDATE_ALL).
+// Cambia el status en user_tasks SOLO para el usuario que hace la petición.
+// El userId se extrae del JWT — el estudiante no puede cambiar el status
+// de la asignación de otro estudiante.
 // =============================================================================
 export const patchTaskStatus = catchAsync(async (req, res) => {
     const { status } = req.body;
+    const taskId = req.params.id;
+    const userId = req.user.id; // extraído del JWT por verifyToken
 
     if (!status) {
         const error = new Error("El campo status es obligatorio");
         error.statusCode = 400; error.isOperational = true; throw error;
     }
 
+    // Actualizamos SOLO la fila de este usuario en user_tasks
     const [result] = await pool.query(
-        'UPDATE tasks SET status = ? WHERE id = ?',
-        [status, req.params.id]
+        'UPDATE user_tasks SET status = ? WHERE task_id = ? AND user_id = ?',
+        [status, taskId, userId]
     );
 
     if (result.affectedRows === 0) {
-        const error = new Error("Tarea no encontrada");
+        const error = new Error("Asignación no encontrada para este usuario y tarea");
         error.statusCode = 404; error.isOperational = true; throw error;
     }
 
@@ -187,27 +210,51 @@ export const patchTaskStatus = catchAsync(async (req, res) => {
 });
 
 // =============================================================================
-// GET TASKS BY USER — GET /api/users/:userId/tasks (también llamado internamente)
-// Devuelve todas las tareas asignadas a un userId específico.
-// Usado por la vista del estudiante para cargar su lista de tareas.
+// GET TASKS BY USER — GET /api/users/:userId/tasks
+// Devuelve las tareas asignadas a un usuario con su estado individual.
+// Usado por el estudiante para cargar solo sus tareas desde el dashboard.
 // =============================================================================
 export const getTasksByUser = catchAsync(async (req, res) => {
-    const [rows] = await pool.query(
-        'SELECT * FROM tasks WHERE userId = ?', [req.params.userId]
-    );
+    const [rows] = await pool.query(`
+        SELECT
+            t.id,
+            t.title,
+            t.description,
+            t.createdAt,
+            ut.status
+        FROM user_tasks ut
+        JOIN tasks t ON ut.task_id = t.id
+        WHERE ut.user_id = ?
+        ORDER BY t.id DESC
+    `, [req.params.userId]);
+
     return successResponse(res, 200, "Tareas del usuario obtenidas", rows);
 });
 
 // =============================================================================
 // FILTER TASKS — GET /api/tasks/filter?status=pendiente
 // Requiere: TASKS_READ_ALL
-// Filtra tareas por el valor de status pasado como query parameter.
-// El schema de Zod (filterTaskQuerySchema) valida que el status sea uno
-// de los cuatro valores permitidos antes de llegar aquí.
+// Filtra por el status de la asignación en user_tasks.
 // =============================================================================
 export const filterTasks = catchAsync(async (req, res) => {
     const { status } = req.query;
-    const [rows] = await pool.query('SELECT * FROM tasks WHERE status = ?', [status]);
+
+    const [rows] = await pool.query(`
+        SELECT
+            t.id,
+            t.title,
+            t.description,
+            t.createdAt,
+            ut.user_id AS userId,
+            ut.status,
+            u.name     AS userName
+        FROM user_tasks ut
+        JOIN tasks t ON ut.task_id = t.id
+        JOIN users u ON ut.user_id = u.id
+        WHERE ut.status = ?
+        ORDER BY t.id DESC
+    `, [status]);
+
     return successResponse(res, 200, "Tareas filtradas", rows);
 });
 
@@ -215,17 +262,13 @@ export const filterTasks = catchAsync(async (req, res) => {
 // GET DASHBOARD — GET /api/tasks/dashboard
 // Requiere: TASKS_READ_ALL
 //
-// Devuelve las métricas globales del sistema de tareas en tres conteos:
-//   - total:      todas las tareas sin importar estado
-//   - pendientes: tareas aún no iniciadas
-//   - completadas: tareas finalizadas con éxito
-//
-// Usadas por el panel principal del Instructor y el SuperAdmin.
+// Las métricas se calculan sobre user_tasks (asignaciones)
+// porque el estado vive en la pivote, no en tasks.
 // =============================================================================
 export const getDashboard = catchAsync(async (req, res) => {
-    const [total]       = await pool.query('SELECT COUNT(*) as count FROM tasks');
-    const [pendientes]  = await pool.query('SELECT COUNT(*) as count FROM tasks WHERE status = "pendiente"');
-    const [completadas] = await pool.query('SELECT COUNT(*) as count FROM tasks WHERE status = "completada"');
+    const [total]       = await pool.query('SELECT COUNT(*) as count FROM user_tasks');
+    const [pendientes]  = await pool.query('SELECT COUNT(*) as count FROM user_tasks WHERE status = "pendiente"');
+    const [completadas] = await pool.query('SELECT COUNT(*) as count FROM user_tasks WHERE status = "completada"');
 
     return successResponse(res, 200, "Métricas del dashboard obtenidas", {
         total:       total[0].count,
@@ -238,55 +281,85 @@ export const getDashboard = catchAsync(async (req, res) => {
 // ASSIGN TASK TO USERS — POST /api/tasks/:taskId/assign
 // Requiere: TASKS_CREATE_MULTIPLE
 //
-// Reasigna una tarea existente a otro usuario. En el modelo actual la
-// tarea tiene un solo userId, así que se actualiza con el primer ID
-// del array recibido (userIds[0]).
+// Agrega nuevas asignaciones a una tarea existente.
+// INSERT IGNORE evita error si el usuario ya estaba asignado (PK duplicada).
 // =============================================================================
 export const assignTaskToUsers = catchAsync(async (req, res) => {
     const { userIds } = req.body;
     const taskId = req.params.taskId;
 
-    if (userIds && userIds.length > 0) {
-        // Tomamos el primer elemento del array (modelo de asignación singular)
-        await pool.query('UPDATE tasks SET userId = ? WHERE id = ?', [userIds[0], taskId]);
+    if (!userIds || userIds.length === 0) {
+        const error = new Error("Debes enviar al menos un userId");
+        error.statusCode = 400; error.isOperational = true; throw error;
     }
-    return successResponse(res, 200, "Usuario asignado a la tarea");
+
+    for (const uid of userIds) {
+        await pool.query(
+            'INSERT IGNORE INTO user_tasks (task_id, user_id, status) VALUES (?, ?, ?)',
+            [taskId, uid, 'pendiente']
+        );
+    }
+
+    return successResponse(res, 200, "Usuarios asignados a la tarea");
 });
 
 // =============================================================================
 // GET TASK USERS — GET /api/tasks/:taskId/users
 // Requiere: TASKS_READ_ALL
-//
-// Devuelve el usuario actualmente asignado a una tarea.
-// Si la tarea no tiene userId, responde con un array vacío (200, no 404).
+// Devuelve todos los usuarios asignados a una tarea con su estado individual.
 // =============================================================================
 export const getTaskUsers = catchAsync(async (req, res) => {
-    const [task] = await pool.query(
-        'SELECT userId FROM tasks WHERE id = ?', [req.params.taskId]
-    );
+    const [rows] = await pool.query(`
+        SELECT
+            u.id,
+            u.name,
+            u.email,
+            ut.status
+        FROM user_tasks ut
+        JOIN users u ON ut.user_id = u.id
+        WHERE ut.task_id = ?
+    `, [req.params.taskId]);
 
-    // Si la tarea no existe o no tiene usuario asignado, devolvemos vacío
-    if (task.length === 0 || !task[0].userId) {
+    if (rows.length === 0) {
         return successResponse(res, 200, "La tarea no tiene usuarios asignados", []);
     }
 
-    const [users] = await pool.query(
-        'SELECT id, name, email FROM users WHERE id = ?', [task[0].userId]
-    );
-    return successResponse(res, 200, "Usuario de la tarea obtenido", users);
+    return successResponse(res, 200, "Usuarios de la tarea obtenidos", rows);
 });
 
 // =============================================================================
 // REMOVE USER FROM TASK — DELETE /api/tasks/:taskId/users/:userId
 // Requiere: TASKS_UPDATE_ALL
-//
-// Desvincula un usuario de una tarea poniendo userId = NULL.
-// El WHERE doble (taskId Y userId) evita desasignar al usuario incorrecto.
+// Elimina la fila de user_tasks que relaciona esa tarea con ese usuario.
 // =============================================================================
 export const removeUserFromTask = catchAsync(async (req, res) => {
     await pool.query(
-        'UPDATE tasks SET userId = NULL WHERE id = ? AND userId = ?',
+        'DELETE FROM user_tasks WHERE task_id = ? AND user_id = ?',
         [req.params.taskId, req.params.userId]
     );
     return successResponse(res, 200, "Usuario removido de la tarea");
+});
+
+// PATCH /api/tasks/:taskId/users/:userId/status
+// El instructor cambia el status de la asignación de UN estudiante específico
+export const patchAssignmentStatus = catchAsync(async (req, res) => {
+    const { status } = req.body;
+    const { taskId, userId } = req.params;
+
+    if (!status) {
+        const error = new Error("El campo status es obligatorio");
+        error.statusCode = 400; error.isOperational = true; throw error;
+    }
+
+    const [result] = await pool.query(
+        'UPDATE user_tasks SET status = ? WHERE task_id = ? AND user_id = ?',
+        [status, taskId, userId]
+    );
+
+    if (result.affectedRows === 0) {
+        const error = new Error("Asignación no encontrada");
+        error.statusCode = 404; error.isOperational = true; throw error;
+    }
+
+    return successResponse(res, 200, "Estado de la asignación actualizado");
 });

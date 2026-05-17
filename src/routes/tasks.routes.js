@@ -36,7 +36,7 @@ import express from 'express';
 import {
     getTasks, getTaskById, createTask, updateTask, deleteTask,
     assignTaskToUsers, getTaskUsers, removeUserFromTask, filterTasks,
-    patchTaskStatus, getDashboard
+    patchTaskStatus, getDashboard, patchAssignmentStatus
 } from '../controllers/tasks.controller.js';
 import { verifyToken, checkPermission } from '../middlewares/auth.middleware.js';
 import { validateSchema }               from '../middlewares/validate.middleware.js';
@@ -142,6 +142,14 @@ tasksRouter.delete('/:taskId/users/:userId',
     verifyToken,
     checkPermission(PERMISSIONS.TASKS_UPDATE_ALL),
     removeUserFromTask
+);
+
+// El instructor actualiza el status de la asignación de un estudiante específico
+tasksRouter.patch(
+    '/:taskId/users/:userId/status',
+    verifyToken,
+    checkPermission(PERMISSIONS.TASKS_UPDATE_ALL),
+    patchAssignmentStatus
 );
 
 export default tasksRouter;
