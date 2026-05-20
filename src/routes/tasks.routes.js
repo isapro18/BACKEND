@@ -38,6 +38,9 @@ import {
     assignTaskToUsers, getTaskUsers, removeUserFromTask, filterTasks,
     patchTaskStatus, getDashboard, patchAssignmentStatus
 } from '../controllers/tasks.controller.js';
+import {
+    getComments, postComment, gradeTask, getGrade
+} from '../controllers/comments.controller.js';
 import { verifyToken, checkPermission } from '../middlewares/auth.middleware.js';
 import { validateSchema }               from '../middlewares/validate.middleware.js';
 import {
@@ -150,6 +153,39 @@ tasksRouter.patch(
     verifyToken,
     checkPermission(PERMISSIONS.TASKS_UPDATE_ALL),
     patchAssignmentStatus
+);
+
+// =============================================================================
+// RUTAS DE COMENTARIOS — Chat entre estudiante ↔ instructor/superadmin
+// =============================================================================
+
+// Obtener el hilo de comentarios de una tarea para un estudiante específico
+tasksRouter.get('/:taskId/comments/:studentId',
+    verifyToken,
+    getComments
+);
+
+// Publicar un comentario en el hilo (cualquier usuario autenticado)
+tasksRouter.post('/:taskId/comments',
+    verifyToken,
+    postComment
+);
+
+// =============================================================================
+// RUTAS DE CALIFICACIÓN — Sistema SENA (>=75 aprueba, <75 no aprueba)
+// =============================================================================
+
+// Calificar una tarea (solo quien puede crear tareas)
+tasksRouter.post('/:taskId/grade',
+    verifyToken,
+    checkPermission(PERMISSIONS.TASKS_CREATE_MULTIPLE),
+    gradeTask
+);
+
+// Obtener la calificación de una tarea+estudiante
+tasksRouter.get('/:taskId/grade/:studentId',
+    verifyToken,
+    getGrade
 );
 
 export default tasksRouter;

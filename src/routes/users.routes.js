@@ -27,7 +27,8 @@
 import express from 'express';
 import {
     getUsers, getUserById, createUser, updateUser,
-    deleteUser, patchUserStatus, getUserTasks, getAuditLogs
+    deleteUser, patchUserStatus, getUserTasks, getAuditLogs,
+    getMe, updateMe, patchUserRoles
 } from '../controllers/users.controller.js';
 import { verifyToken, checkPermission } from '../middlewares/auth.middleware.js';
 import { validateSchema }               from '../middlewares/validate.middleware.js';
@@ -41,42 +42,55 @@ const usersRouter = express.Router();
 // ⚠️  Deben ir ANTES de /:id para evitar que Express las interprete como IDs.
 // =============================================================================
 
-// Historial de auditoría: acciones críticas registradas en audit_logs.
-// Solo Auditores y SuperAdmins tienen el permiso SYSTEM_AUDIT.
+// Historial de auditoría
 usersRouter.get('/audit/logs',
     verifyToken,
     checkPermission(PERMISSIONS.SYSTEM_AUDIT),
     getAuditLogs
 );
 
-// Tareas de un usuario específico.
-// Solo requiere estar logueado: el estudiante puede ver las suyas propias
-// sin necesitar el permiso de gestión (USERS_READ_ALL).
+// Perfil propio — cualquier usuario autenticado puede ver sus datos
+// ⚠️ Debe estar ANTES de /:id o Express leería "me" como un ID numérico
+usersRouter.get('/me',
+    verifyToken,
+    getMe
+);
+
+// Actualizar perfil propio — cualquier usuario autenticado
+usersRouter.patch('/me',
+    verifyToken,
+    updateMe
+);
+
+// Tareas de un usuario específico
 usersRouter.get('/:id/tasks',
     verifyToken,
     getUserTasks
+);
+
+// Cambiar roles de un usuario — Admin (array de role_ids)
+usersRouter.patch('/:id/roles',
+    verifyToken,
+    checkPermission(PERMISSIONS.USERS_UPDATE_STATUS),
+    patchUserRoles
 );
 
 // =============================================================================
 // CRUD PRINCIPAL DE USUARIOS
 // =============================================================================
 
-// Listar todos los usuarios del sistema (con rol normalizado)
 usersRouter.get('/',
     verifyToken,
     checkPermission(PERMISSIONS.USERS_READ_ALL),
     getUsers
 );
 
-// Obtener el detalle de un usuario por ID
 usersRouter.get('/:id',
     verifyToken,
     checkPermission(PERMISSIONS.USERS_READ_ALL),
     getUserById
 );
 
-// Crear un nuevo usuario desde el panel de administración.
-// La contraseña temporal es los últimos 4 dígitos del documento.
 usersRouter.post('/',
     verifyToken,
     checkPermission(PERMISSIONS.USERS_CREATE),
@@ -84,7 +98,6 @@ usersRouter.post('/',
     createUser
 );
 
-// Actualización completa de datos de un usuario (solo SuperAdmin)
 usersRouter.put('/:id',
     verifyToken,
     checkPermission(PERMISSIONS.SYSTEM_MANAGE_ALL),
@@ -96,17 +109,12 @@ usersRouter.put('/:id',
 // GESTIÓN DE ESTADO Y ELIMINACIÓN
 // =============================================================================
 
-// Soft delete / reactivación: cambia el estado entre 'activo' e 'inactivo'.
-// El usuario inactivo no puede iniciar sesión pero sigue en la BD.
 usersRouter.patch('/:id/status',
     verifyToken,
     checkPermission(PERMISSIONS.SYSTEM_MANAGE_ALL),
     patchUserStatus
 );
 
-// Hard delete con auditoría obligatoria.
-// Requiere el query param ?reason= con la justificación del administrador.
-// El controlador guarda el log ANTES de eliminar el registro.
 usersRouter.delete('/:id',
     verifyToken,
     checkPermission(PERMISSIONS.SYSTEM_MANAGE_ALL),

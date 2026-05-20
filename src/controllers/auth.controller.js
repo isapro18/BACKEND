@@ -89,9 +89,16 @@ export const register = catchAsync(async (req, res) => {
     // Hasheamos la contraseña antes de guardarla (bcrypt, 10 rondas de salt)
     const hashedPassword = await hashPassword(password);
 
+    // Insertamos SIN role_id — la columna ya no existe en users
     const [result] = await pool.query(
-        'INSERT INTO users (name, email, document, password, role_id) VALUES (?, ?, ?, ?, ?)',
-        [name, email, document, hashedPassword, finalRoleId]
+        'INSERT INTO users (name, email, document, password) VALUES (?, ?, ?, ?)',
+        [name, email, document, hashedPassword]
+    );
+
+    // Asignamos el rol en la tabla pivote user_roles
+    await pool.query(
+        'INSERT INTO user_roles (user_id, role_id) VALUES (?, ?)',
+        [result.insertId, finalRoleId]
     );
 
     // Mensaje dinámico: le informamos al cliente si coronó como SuperAdmin
@@ -121,15 +128,11 @@ export const login = catchAsync(async (req, res) => {
         error.statusCode = 400; error.isOperational = true; throw error;
     }
 
-    // Buscamos al usuario junto con el nombre de su rol en un solo JOIN
-    const [users] = await pool.query(`
-        SELECT u.*, r.name as role_name 
-        FROM users u JOIN roles r ON u.role_id = r.id
-        WHERE u.document = ?
-    `, [document]);
+    // Buscamos el usuario sin JOIN a roles (ya no tiene role_id en users)
+    const [users] = await pool.query(
+        'SELECT * FROM users WHERE document = ?', [document]
+    );
 
-    // Usamos el mismo mensaje genérico para usuario no encontrado e incorrecto
-    // para no revelar si el documento existe o no (seguridad por enumeración)
     if (users.length === 0) {
         const error = new Error("Credenciales inválidas");
         error.statusCode = 401; error.isOperational = true; throw error;
@@ -137,43 +140,50 @@ export const login = catchAsync(async (req, res) => {
 
     const user = users[0];
 
-    // Bloqueamos el acceso si el usuario fue desactivado por un admin
     if (user.status === 'inactivo') {
         const error = new Error("El usuario se encuentra inactivo. Contacte al administrador.");
         error.statusCode = 403; error.isOperational = true; throw error;
     }
 
-    // Comparamos la contraseña enviada contra el hash guardado en la BD
     const isPasswordValid = await comparePassword(password, user.password);
     if (!isPasswordValid) {
         const error = new Error("Credenciales inválidas");
         error.statusCode = 401; error.isOperational = true; throw error;
     }
 
-    // ── CARGA DE PERMISOS ATÓMICOS ─────────────────────────────────────────
-    // Consultamos la tabla pivote role_permissions para obtener los permisos
-    // del rol del usuario. Se embeben en el JWT para evitar consultas
-    // repetidas a la BD en cada petición protegida.
+    // ── CARGA DE ROLES Y PERMISOS (MULTI-ROL) ─────────────────────────────
+    // Traemos todos los roles del usuario desde user_roles
+    const [rolesData] = await pool.query(`
+        SELECT DISTINCT r.id as role_id, r.name as role_name
+        FROM user_roles ur
+        JOIN roles r ON ur.role_id = r.id
+        WHERE ur.user_id = ?
+    `, [user.id]);
+
+    // Acumulamos los permisos únicos de TODOS sus roles
     const [permissionsData] = await pool.query(`
-        SELECT p.name FROM role_permissions rp
+        SELECT DISTINCT p.name
+        FROM user_roles ur
+        JOIN role_permissions rp ON ur.role_id = rp.role_id
         JOIN permissions p ON rp.permission_id = p.id
-        WHERE rp.role_id = ?
-    `, [user.role_id]);
+        WHERE ur.user_id = ?
+    `, [user.id]);
 
-    // Convertimos el array de objetos a un array plano de strings
-    user.permissions = permissionsData.map(p => p.name);
+    const roles       = rolesData.map(r => r.role_name);  // ['Profesor', 'Auditor']
+    const roleIds     = rolesData.map(r => r.role_id);    // [2, 4]
+    const permissions = permissionsData.map(p => p.name); // unión de todos los permisos
 
-    // Generamos el par de tokens con el payload completo
-    const { accessToken, refreshToken } = generateTokens(user);
+    const { accessToken, refreshToken } = generateTokens({
+        id: user.id,
+        roles,
+        roleIds,
+        permissions,
+    });
 
     return successResponse(res, 200, "Inicio de sesión exitoso", {
-        user: {
-            id: user.id, name: user.name,
-            role: user.role_name, role_id: user.role_id,
-            permissions: user.permissions
-        },
+        user: { id: user.id, name: user.name, roles, roleIds, permissions },
         accessToken,
-        refreshToken
+        refreshToken,
     });
 });
 
@@ -197,10 +207,11 @@ export const renewToken = catchAsync(async (req, res) => {
         // Verificamos la firma y la expiración del refreshToken
         const decoded = jwt.verify(refreshToken, process.env.JWT_REFRESH_SECRET);
 
-        // Generamos tokens nuevos con los mismos datos del payload original
         const { accessToken, refreshToken: newRefreshToken } = generateTokens({
-            id: decoded.id, role_name: decoded.role,
-            role_id: decoded.role_id, permissions: decoded.permissions
+            id:          decoded.id,
+            roles:       decoded.roles,
+            roleIds:     decoded.roleIds,
+            permissions: decoded.permissions,
         });
 
         return successResponse(res, 200, "Token renovado exitosamente", {

@@ -36,7 +36,7 @@
 import pool from '../config/db.js';
 import { catchAsync }      from '../utils/catchAsync.js';
 import { successResponse } from '../utils/response.handler.js';
-import { hashPassword }    from '../utils/security.js';
+import { hashPassword, comparePassword } from '../utils/security.js';
 
 // =============================================================================
 // HELPER: normalizarRol(roleNameBD)
@@ -72,15 +72,23 @@ function normalizarRol(roleNameBD) {
 // =============================================================================
 export const getUsers = catchAsync(async (req, res) => {
     const [rows] = await pool.query(`
-        SELECT u.id, u.name, u.email, u.document, u.status, u.createdAt, u.role_id,
-               r.name as role_name
+        SELECT u.id, u.name, u.email, u.document, u.status, u.createdAt,
+               GROUP_CONCAT(r.id ORDER BY r.id)                    AS role_ids,
+               GROUP_CONCAT(r.name ORDER BY r.id SEPARATOR '|')   AS role_names
         FROM users u
-        JOIN roles r ON u.role_id = r.id
+        LEFT JOIN user_roles ur ON u.id = ur.user_id
+        LEFT JOIN roles r       ON ur.role_id = r.id
+        GROUP BY u.id
+        ORDER BY u.id ASC
     `);
-
-    // Transformamos cada fila agregando el campo `role` en formato frontend
-    const users = rows.map(u => ({ ...u, role: normalizarRol(u.role_name) }));
-    return successResponse(res, 200, "Usuarios obtenidos correctamente", users);
+    const users = rows.map(u => {
+        const roleNames = u.role_names ? u.role_names.split('|') : [];
+        const roleIds   = u.role_ids   ? u.role_ids.split(',').map(Number) : [];
+        return { ...u, role_ids: roleIds, role_names: roleNames,
+            role: roleNames.some(r => ['SuperAdmin','Profesor'].includes(r)) ? 'admin'
+                : roleNames.includes('Auditor') ? 'auditor' : 'user' };
+    });
+    return successResponse(res, 200, 'Usuarios obtenidos correctamente', users);
 });
 
 // =============================================================================
@@ -90,21 +98,27 @@ export const getUsers = catchAsync(async (req, res) => {
 // =============================================================================
 export const getUserById = catchAsync(async (req, res) => {
     const [rows] = await pool.query(`
-        SELECT u.id, u.name, u.email, u.document, u.status, u.createdAt, u.role_id,
-               r.name as role_name
+        SELECT u.id, u.name, u.email, u.document, u.status, u.createdAt,
+               GROUP_CONCAT(r.id ORDER BY r.id)                    AS role_ids,
+               GROUP_CONCAT(r.name ORDER BY r.id SEPARATOR '|')   AS role_names
         FROM users u
-        JOIN roles r ON u.role_id = r.id
+        LEFT JOIN user_roles ur ON u.id = ur.user_id
+        LEFT JOIN roles r       ON ur.role_id = r.id
         WHERE u.id = ?
+        GROUP BY u.id
     `, [req.params.id]);
 
     if (rows.length === 0) {
-        const error = new Error("Usuario no encontrado");
+        const error = new Error('Usuario no encontrado');
         error.statusCode = 404; error.isOperational = true; throw error;
     }
-
     const u = rows[0];
-    return successResponse(res, 200, "Usuario encontrado", {
-        ...u, role: normalizarRol(u.role_name)
+    const roleNames = u.role_names ? u.role_names.split('|') : [];
+    const roleIds   = u.role_ids   ? u.role_ids.split(',').map(Number) : [];
+    return successResponse(res, 200, 'Usuario encontrado', {
+        ...u, role_ids: roleIds, role_names: roleNames,
+        role: roleNames.some(r => ['SuperAdmin','Profesor'].includes(r)) ? 'admin'
+            : roleNames.includes('Auditor') ? 'auditor' : 'user'
     });
 });
 
@@ -118,18 +132,22 @@ export const getUserById = catchAsync(async (req, res) => {
 // El estado inicial siempre es 'activo'.
 // =============================================================================
 export const createUser = catchAsync(async (req, res) => {
-    const { name, email, document, role_id } = req.body;
-
-    // Contraseña temporal = últimos 4 dígitos del documento
+    const { name, email, document, role_ids } = req.body;
     const tempPassword   = document.slice(-4);
     const hashedPassword = await hashPassword(tempPassword);
 
     const [result] = await pool.query(
-        'INSERT INTO users (name, email, document, password, role_id, status) VALUES (?, ?, ?, ?, ?, ?)',
-        [name, email, document, hashedPassword, role_id || 3, 'activo']
+        'INSERT INTO users (name, email, document, password, status) VALUES (?, ?, ?, ?, ?)',
+        [name, email, document, hashedPassword, 'activo']
     );
 
-    return successResponse(res, 201, "Usuario creado con éxito", { id: result.insertId });
+    // Asignamos uno o varios roles en la tabla pivote
+    const roles = Array.isArray(role_ids) && role_ids.length > 0 ? role_ids : [3];
+    await Promise.all(roles.map(rid =>
+        pool.query('INSERT INTO user_roles (user_id, role_id) VALUES (?, ?)', [result.insertId, rid])
+    ));
+
+    return successResponse(res, 201, 'Usuario creado con éxito', { id: result.insertId });
 });
 
 // =============================================================================
@@ -140,19 +158,19 @@ export const createUser = catchAsync(async (req, res) => {
 // Todos los campos son obligatorios en el body (validado por updateUserSchema).
 // =============================================================================
 export const updateUser = catchAsync(async (req, res) => {
-    const { name, email, document, role_id, status } = req.body;
+    const { name, email, document, status } = req.body;
 
     const [result] = await pool.query(
-        'UPDATE users SET name = ?, email = ?, document = ?, role_id = ?, status = ? WHERE id = ?',
-        [name, email, document, role_id, status, req.params.id]
+        'UPDATE users SET name = ?, email = ?, document = ?, status = ? WHERE id = ?',
+        [name, email, document, status, req.params.id]
     );
 
     if (result.affectedRows === 0) {
-        const error = new Error("Usuario no encontrado");
+        const error = new Error('Usuario no encontrado');
         error.statusCode = 404; error.isOperational = true; throw error;
     }
 
-    return successResponse(res, 200, "Usuario actualizado correctamente");
+    return successResponse(res, 200, 'Usuario actualizado correctamente');
 });
 
 // =============================================================================
@@ -279,11 +297,171 @@ export const patchUserStatus = catchAsync(async (req, res) => {
 // =============================================================================
 export const getAuditLogs = catchAsync(async (req, res) => {
     const [rows] = await pool.query(`
-        SELECT a.id, a.action, a.reason, a.target_user_name, a.createdAt,
+        SELECT a.id, a.action, a.reason, a.target_user_id, a.target_user_name, a.createdAt,
                u.name AS performed_by_name
         FROM audit_logs a
         LEFT JOIN users u ON a.performed_by = u.id
         ORDER BY a.createdAt DESC
     `);
     return successResponse(res, 200, "Registros de auditoría obtenidos", rows);
+});
+
+// =============================================================================
+// GET ME — GET /api/users/me
+// Requiere: solo verifyToken (cualquier usuario autenticado)
+//
+// Devuelve los datos del usuario que tiene la sesión activa.
+// Lee el ID desde el JWT — el usuario no puede consultar a otro.
+// Usado por Profile.view.js para mostrar los datos actuales en placeholders.
+// =============================================================================
+export const getMe = catchAsync(async (req, res) => {
+    const [rows] = await pool.query(`
+        SELECT u.id, u.name, u.email, u.document, u.status, u.createdAt,
+               GROUP_CONCAT(r.id ORDER BY r.id)                    AS role_ids,
+               GROUP_CONCAT(r.name ORDER BY r.id SEPARATOR '|')   AS role_names
+        FROM users u
+        LEFT JOIN user_roles ur ON u.id = ur.user_id
+        LEFT JOIN roles r       ON ur.role_id = r.id
+        WHERE u.id = ?
+        GROUP BY u.id
+    `, [req.user.id]);
+
+    if (rows.length === 0) {
+        const error = new Error('Usuario no encontrado');
+        error.statusCode = 404; error.isOperational = true; throw error;
+    }
+    const u = rows[0];
+    const roleNames = u.role_names ? u.role_names.split('|') : [];
+    const roleIds   = u.role_ids   ? u.role_ids.split(',').map(Number) : [];
+    return successResponse(res, 200, 'Perfil obtenido correctamente', {
+        ...u, role_ids: roleIds, role_names: roleNames,
+        role: roleNames.some(r => ['SuperAdmin','Profesor'].includes(r)) ? 'admin'
+            : roleNames.includes('Auditor') ? 'auditor' : 'user'
+    });
+});
+
+// =============================================================================
+// UPDATE ME — PATCH /api/users/me
+// Requiere: solo verifyToken (cualquier usuario autenticado)
+//
+// El usuario actualiza sus propios datos. El ID se toma del JWT.
+// Todos los campos son opcionales — solo se actualiza lo que llegue.
+// El backend valida unicidad de email y document contra otros usuarios.
+// La contraseña se hashea antes de guardar.
+// =============================================================================
+export const updateMe = catchAsync(async (req, res) => {
+    const { name, email, document, password, currentPassword } = req.body;
+    const userId = req.user.id;
+
+    // Verificamos duplicados de email y document excluyendo al propio usuario
+    if (email) {
+        const [existing] = await pool.query(
+            'SELECT id FROM users WHERE email = ? AND id != ?', [email, userId]
+        );
+        if (existing.length > 0) {
+            const error = new Error("El correo ya está registrado por otro usuario.");
+            error.statusCode = 409; error.isOperational = true; throw error;
+        }
+    }
+
+    if (document) {
+        const [existing] = await pool.query(
+            'SELECT id FROM users WHERE document = ? AND id != ?', [document, userId]
+        );
+        if (existing.length > 0) {
+            const error = new Error("El documento ya está registrado por otro usuario.");
+            error.statusCode = 409; error.isOperational = true; throw error;
+        }
+    }
+
+    // Validación de contraseña: si quiere cambiarla necesitamos la actual
+    if (password) {
+        if (!currentPassword) {
+            const error = new Error("Debes ingresar tu contraseña actual para poder cambiarla.");
+            error.statusCode = 400; error.isOperational = true; throw error;
+        }
+
+        // Traemos el hash actual de la BD
+        const [rows] = await pool.query('SELECT password FROM users WHERE id = ?', [userId]);
+        if (rows.length === 0) {
+            const error = new Error("Usuario no encontrado.");
+            error.statusCode = 404; error.isOperational = true; throw error;
+        }
+
+        const currentHash = rows[0].password;
+
+        // Verificamos que la contraseña actual sea correcta
+        const isCurrentValid = await comparePassword(currentPassword, currentHash);
+        if (!isCurrentValid) {
+            const error = new Error("La contraseña actual es incorrecta.");
+            error.statusCode = 401; error.isOperational = true; throw error;
+        }
+
+        // Verificamos que la nueva contraseña sea diferente a la actual
+        const isSamePassword = await comparePassword(password, currentHash);
+        if (isSamePassword) {
+            const error = new Error("La nueva contraseña no puede ser igual a la actual.");
+            error.statusCode = 400; error.isOperational = true; throw error;
+        }
+    }
+
+    // Construimos el SET dinámicamente con solo los campos que llegaron
+    const fields = [];
+    const values = [];
+
+    if (name)     { fields.push('name = ?');     values.push(name); }
+    if (email)    { fields.push('email = ?');     values.push(email); }
+    if (document) { fields.push('document = ?');  values.push(document); }
+    if (password) {
+        const hashed = await hashPassword(password);
+        fields.push('password = ?');
+        values.push(hashed);
+    }
+
+    if (fields.length === 0) {
+        const error = new Error("No se enviaron campos para actualizar.");
+        error.statusCode = 400; error.isOperational = true; throw error;
+    }
+
+    values.push(userId);
+    await pool.query(`UPDATE users SET ${fields.join(', ')} WHERE id = ?`, values);
+
+    return successResponse(res, 200, "Perfil actualizado correctamente");
+});
+
+// =============================================================================
+// PATCH USER ROLE — PATCH /api/users/:id/role
+// Requiere: USERS_UPDATE_STATUS (Profesor/Admin puede cambiar roles)
+//
+// Cambia únicamente el rol de un usuario.
+// El SuperAdmin no puede cambiarle el rol a otro SuperAdmin.
+// =============================================================================
+export const patchUserRoles = catchAsync(async (req, res) => {
+    const { role_ids } = req.body;
+
+    if (!Array.isArray(role_ids) || role_ids.length === 0) {
+        const error = new Error('Debes asignar al menos un rol.');
+        error.statusCode = 400; error.isOperational = true; throw error;
+    }
+
+    const userId = req.params.id;
+
+    const [target] = await pool.query('SELECT id FROM users WHERE id = ?', [userId]);
+    if (target.length === 0) {
+        const error = new Error('Usuario no encontrado.');
+        error.statusCode = 404; error.isOperational = true; throw error;
+    }
+
+    // El usuario id=1 es el Admin principal del sistema.
+    // Su rol Admin (role_id=1) nunca puede quitarse — siempre se incluye.
+    const finalRoleIds = Number(userId) === 1
+        ? [...new Set([...role_ids, 1])]
+        : role_ids;
+
+    await pool.query('DELETE FROM user_roles WHERE user_id = ?', [userId]);
+    await Promise.all(finalRoleIds.map(rid =>
+        pool.query('INSERT INTO user_roles (user_id, role_id) VALUES (?, ?)', [userId, rid])
+    ));
+
+    return successResponse(res, 200, 'Roles actualizados correctamente');
 });

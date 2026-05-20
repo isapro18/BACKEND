@@ -72,17 +72,15 @@ export const comparePassword = async (password, hashedPassword) => {
 export const generateTokens = (user) => {
     const payload = {
         id:          user.id,
-        role:        user.role_name || user.role, // compatibilidad con ambos formatos
-        role_id:     user.role_id,
-        permissions: user.permissions || []        // array de permisos atómicos del rol
+        roles:       user.roles   || [],       // array de nombres: ['Profesor', 'Auditor']
+        roleIds:     user.roleIds || [],        // array de IDs:    [2, 4]
+        permissions: user.permissions || [],    // unión de todos los permisos atómicos
     };
 
-    // Token de acceso: vida corta, se renueva con el refreshToken
     const accessToken = jwt.sign(payload, process.env.JWT_SECRET, {
         expiresIn: process.env.JWT_EXPIRES_IN || '15m'
     });
 
-    // Token de refresco: vida larga, solo se usa en POST /api/auth/refresh
     const refreshToken = jwt.sign(payload, process.env.JWT_REFRESH_SECRET, {
         expiresIn: process.env.JWT_REFRESH_EXPIRES_IN || '7d'
     });

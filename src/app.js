@@ -76,9 +76,10 @@ import 'dotenv/config'; // Carga las variables de entorno desde .env
 import './config/db.js';
 
 // ── Módulos de rutas ───────────────────────────────────────────────────────────
-import userRoutes from './routes/users.routes.js';
-import taskRoutes from './routes/tasks.routes.js';
-import authRoutes from './routes/auth.routes.js';
+import userRoutes  from './routes/users.routes.js';
+import taskRoutes  from './routes/tasks.routes.js';
+import authRoutes  from './routes/auth.routes.js';
+import rolesRoutes from './routes/roles.routes.js';
 
 const app = express();
 
@@ -101,9 +102,16 @@ app.use(express.urlencoded({ extended: true }));
 // Express intenta emparejar cada petición con estas rutas en orden.
 // Si ninguna coincide, cae al manejador 404 de abajo.
 // =============================================================================
-app.use('/api/auth',  authRoutes);  // Autenticación (público y semi-público)
-app.use('/api/users', userRoutes);  // Gestión de usuarios (requiere token)
-app.use('/api/tasks', taskRoutes);  // Gestión de tareas (requiere token)
+app.use('/api/auth',  authRoutes);
+app.use('/api/users', userRoutes);
+app.use('/api/tasks', taskRoutes);
+app.use('/api/roles', rolesRoutes);
+
+// Health check — endpoint público para que el frontend verifique conectividad.
+// No requiere token. Si este endpoint responde, el backend está vivo.
+app.get('/api/health', (req, res) => {
+    res.status(200).json({ ok: true, msn: 'OK' });
+});
 
 // Ruta raíz de bienvenida — útil para verificar que el servidor responde
 app.get('/', (req, res) => {

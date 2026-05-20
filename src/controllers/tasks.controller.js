@@ -44,10 +44,18 @@ export const getTasks = catchAsync(async (req, res) => {
             t.createdAt,
             ut.user_id  AS userId,
             ut.status,
-            u.name      AS userName
+            u.name      AS userName,
+            creator.id   AS creatorId,
+            creator.name AS creatorName,
+            (SELECT GROUP_CONCAT(r.name ORDER BY r.id SEPARATOR ', ')
+             FROM user_roles ur2
+             JOIN roles r ON r.id = ur2.role_id
+             WHERE ur2.user_id = creator.id
+            ) AS creatorRoles
         FROM tasks t
         LEFT JOIN user_tasks ut ON t.id = ut.task_id
         LEFT JOIN users u       ON ut.user_id = u.id
+        LEFT JOIN users creator ON t.created_by = creator.id
         ORDER BY t.id DESC
     `);
     return successResponse(res, 200, "Tareas obtenidas correctamente", rows);
@@ -66,10 +74,18 @@ export const getTaskById = catchAsync(async (req, res) => {
             t.createdAt,
             ut.user_id AS userId,
             ut.status,
-            u.name     AS userName
+            u.name     AS userName,
+            creator.id   AS creatorId,
+            creator.name AS creatorName,
+            (SELECT GROUP_CONCAT(r.name ORDER BY r.id SEPARATOR ', ')
+             FROM user_roles ur2
+             JOIN roles r ON r.id = ur2.role_id
+             WHERE ur2.user_id = creator.id
+            ) AS creatorRoles
         FROM tasks t
         LEFT JOIN user_tasks ut ON t.id = ut.task_id
         LEFT JOIN users u       ON ut.user_id = u.id
+        LEFT JOIN users creator ON t.created_by = creator.id
         WHERE t.id = ?
     `, [req.params.id]);
 
@@ -104,10 +120,10 @@ export const createTask = catchAsync(async (req, res) => {
         error.statusCode = 400; error.isOperational = true; throw error;
     }
 
-    // Paso 1: creamos la tarea UNA sola vez en tasks
+    // Paso 1: creamos la tarea UNA sola vez en tasks, guardando quién la creó
     const [result] = await pool.query(
-        'INSERT INTO tasks (title, description) VALUES (?, ?)',
-        [title, description || null]
+        'INSERT INTO tasks (title, description, created_by) VALUES (?, ?, ?)',
+        [title, description || null, req.user.id]
     );
     const taskId = result.insertId;
 

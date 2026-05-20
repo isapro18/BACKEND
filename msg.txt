@@ -1,12 +1,29 @@
-feat(backend): implementa Mailtrap OTP, RBAC atomico y documenta todos los modulos
+feat(backend): comentarios por tarea, calificaciones SENA y gestion de roles
 
-- Agrega utils/email.js con sendOTPEmail() via Mailtrap Sandbox usando Fetch nativo
-- Implementa flujo OTP completo: forgot-password, verify-otp y reset-password
-- Agrega checkPermissionAny() en tasks.routes.js para aceptar TASKS_READ_ALL o TASKS_READ_OWN
-- Corrige orden de rutas en tasks.routes.js: /filter y /dashboard antes de /:id
-- Corrige orden de rutas en users.routes.js: /audit/logs antes de /:id
-- Agrega permisos atomicos al payload JWT en login: array permissions[] por rol
-- Agrega .env.example con variables requeridas documentadas
-- Agrega db_script.sql con estructura completa de la base de datos
-- Agrega docs/evidencias/rbac.md con matriz de roles y permisos
-- Documenta todos los modulos con cabeceras ASCII y JSDoc completo
+COMENTARIOS
+- Agrega Comments.controller.js con getComments() y postComment()
+- GET  /api/tasks/:taskId/comments/:studentId devuelve hilo con nombre y roles del autor
+- POST /api/tasks/:taskId/comments publica mensaje con author_id del usuario autenticado
+- Cualquier usuario autenticado puede leer y escribir en su propio hilo
+
+CALIFICACIONES
+- Agrega gradeTask() y getGrade() en Comments.controller.js
+- POST /api/tasks/:taskId/grade upsert de nota 0-100 (requiere TASKS_CREATE_MULTIPLE)
+- GET  /api/tasks/:taskId/grade/:studentId devuelve nota, quien califico y si aprobo
+- Logica SENA: >= 75 aprueba, campo approved en la respuesta
+
+GESTION DE ROLES
+- GET    /api/roles lista todos los roles con sus permisos
+- GET    /api/roles/permissions lista todos los permisos del sistema
+- POST   /api/roles crea rol personalizado (requiere SYSTEM_MANAGE_ALL)
+- DELETE /api/roles/:id elimina rol (protege los 4 roles base)
+- PUT    /api/roles/:id/permissions reemplaza permisos de un rol
+
+BASE DE DATOS
+- Agrega tabla task_comments (task_id, student_id, author_id, message)
+- Agrega tabla task_grades con UNIQUE (task_id, student_id) y CHECK grade <= 100
+- Agrega created_by en tasks y target_user_id en audit_logs
+- Actualiza db_script.sql con script definitivo v3
+
+RBAC
+- Payload JWT incluye array permissions[] como union de todos los roles del usuario
