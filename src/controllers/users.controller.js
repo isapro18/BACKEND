@@ -217,6 +217,19 @@ export const getUserTasks = catchAsync(async (req, res) => {
 // =============================================================================
 export const deleteUser = catchAsync(async (req, res) => {
     const targetUserId = req.params.id;
+    const adminId      = req.user?.id || req.userId || null;
+
+    // ── REGLA 1: Nadie puede eliminarse a sí mismo ────────────────────────────
+    if (String(targetUserId) === String(adminId)) {
+        const error = new Error("No puedes eliminar tu propia cuenta.");
+        error.statusCode = 403; error.isOperational = true; throw error;
+    }
+
+    // ── REGLA 2: El usuario id=1 (SuperAdmin original) es intocable ───────────
+    if (String(targetUserId) === '1') {
+        const error = new Error("El SuperAdmin principal del sistema no puede ser eliminado.");
+        error.statusCode = 403; error.isOperational = true; throw error;
+    }
 
     // La justificación llega como query param: DELETE /api/users/5?reason=...
     const reason = req.query.reason;
@@ -237,9 +250,6 @@ export const deleteUser = catchAsync(async (req, res) => {
     }
 
     const targetUser = userRows[0];
-
-    // ID del administrador que ejecuta la acción (extraído del JWT por verifyToken)
-    const adminId = req.user?.id || req.userId || null;
 
     // ── REGISTRO DE AUDITORÍA (antes de borrar) ───────────────────────────────
     await pool.query(
@@ -267,7 +277,21 @@ export const deleteUser = catchAsync(async (req, res) => {
 // (bloqueado en el controlador de login).
 // =============================================================================
 export const patchUserStatus = catchAsync(async (req, res) => {
-    const { status } = req.body;
+    const { status }   = req.body;
+    const targetUserId = req.params.id;
+    const adminId      = req.user?.id || req.userId || null;
+
+    // ── REGLA 1: Nadie puede desactivarse a sí mismo ─────────────────────────
+    if (String(targetUserId) === String(adminId)) {
+        const error = new Error("No puedes cambiar el estado de tu propia cuenta.");
+        error.statusCode = 403; error.isOperational = true; throw error;
+    }
+
+    // ── REGLA 2: El usuario id=1 (SuperAdmin original) nunca se puede desactivar
+    if (String(targetUserId) === '1') {
+        const error = new Error("El SuperAdmin principal del sistema no puede ser desactivado.");
+        error.statusCode = 403; error.isOperational = true; throw error;
+    }
 
     if (!status) {
         const error = new Error("El campo status es obligatorio");
@@ -275,7 +299,7 @@ export const patchUserStatus = catchAsync(async (req, res) => {
     }
 
     const [result] = await pool.query(
-        'UPDATE users SET status = ? WHERE id = ?', [status, req.params.id]
+        'UPDATE users SET status = ? WHERE id = ?', [status, targetUserId]
     );
 
     if (result.affectedRows === 0) {

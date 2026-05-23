@@ -1,13 +1,11 @@
 -- ============================================================================
 -- TaskApp SENA — Script de Base de Datos DEFINITIVO
--- Versión: v3 — Multi-Roles + Creador de Tareas + Comentarios + Calificaciones
+-- Versión: v4 — Fix integridad referencial en task_comments.author_id
 --
--- INCLUYE TODOS LOS CAMBIOS:
---   ✅ Sistema RBAC multi-rol (user_roles)
---   ✅ Columna created_by en tasks (quién creó la tarea)
---   ✅ Tabla task_comments (chat estudiante ↔ instructor)
---   ✅ Tabla task_grades (calificaciones sistema SENA ≥75 aprueba)
---   ✅ Auditoría con target_user_id
+-- CAMBIOS RESPECTO A v3:
+--   ✅ task_comments.author_id → INT NULL + ON DELETE SET NULL
+--      Antes: ON DELETE CASCADE (borraba comentarios al eliminar al instructor)
+--      Ahora: ON DELETE SET NULL (conserva el historial del hilo)
 -- ============================================================================
 
 CREATE USER IF NOT EXISTS 'nano'@'localhost' IDENTIFIED BY 'admin123';
@@ -48,7 +46,7 @@ CREATE TABLE role_permissions (
 
 -- ============================================================================
 -- 3. USUARIOS
--- ⚠️  Sin role_id — los roles viven en la tabla pivote user_roles
+-- Sin role_id — los roles viven en la tabla pivote user_roles.
 -- ============================================================================
 
 CREATE TABLE users (
@@ -134,19 +132,25 @@ CREATE TABLE audit_logs (
 --
 -- Chat entre estudiante ↔ instructor/superadmin dentro de cada tarea.
 -- Hilo identificado por (task_id, student_id).
--- author_id = quien escribe el mensaje (puede ser el estudiante o el instructor).
+--
+-- author_id  → NULL si el autor es eliminado del sistema (SET NULL).
+--              Así el historial del hilo se conserva intacto.
+--              En el frontend mostrar "Usuario eliminado" cuando sea NULL.
+--
+-- student_id → CASCADE: si el estudiante es eliminado, sus hilos se borran
+--              junto con él porque no tiene sentido conservarlos.
 -- ============================================================================
 
 CREATE TABLE task_comments (
     id         INT AUTO_INCREMENT PRIMARY KEY,
     task_id    INT  NOT NULL,
     student_id INT  NOT NULL,
-    author_id  INT  NOT NULL,
+    author_id  INT  NULL,                  -- ← NULL cuando el autor fue eliminado
     message    TEXT NOT NULL,
     createdAt  TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY (task_id)    REFERENCES tasks(id) ON DELETE CASCADE,
     FOREIGN KEY (student_id) REFERENCES users(id) ON DELETE CASCADE,
-    FOREIGN KEY (author_id)  REFERENCES users(id) ON DELETE CASCADE,
+    FOREIGN KEY (author_id)  REFERENCES users(id) ON DELETE SET NULL,  -- ← SET NULL (fix v4)
     INDEX idx_task_student (task_id, student_id)
 );
 
@@ -160,10 +164,10 @@ CREATE TABLE task_comments (
 
 CREATE TABLE task_grades (
     id         INT AUTO_INCREMENT PRIMARY KEY,
-    task_id    INT            NOT NULL,
-    student_id INT            NOT NULL,
+    task_id    INT              NOT NULL,
+    student_id INT              NOT NULL,
     grade      TINYINT UNSIGNED NOT NULL,
-    graded_by  INT            NULL,
+    graded_by  INT              NULL,
     createdAt  TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updatedAt  TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
     CONSTRAINT chk_grade CHECK (grade <= 100),
@@ -188,17 +192,17 @@ INSERT INTO roles (name, description) VALUES
 -- ============================================================================
 
 INSERT INTO permissions (name, description) VALUES
-('system.manage.all',       'Gestión total del sistema'),        -- id 1
-('users.create',            'Crear usuarios'),                   -- id 2
-('users.read.all',          'Leer todos los usuarios'),          -- id 3
-('users.update.status',     'Cambiar estado de usuarios'),       -- id 4
-('tasks.create.multiple',   'Crear tareas masivas'),             -- id 5
-('tasks.read.all',          'Ver todas las tareas'),             -- id 6
-('tasks.update.all',        'Editar cualquier tarea'),           -- id 7
-('tasks.delete.all',        'Eliminar cualquier tarea'),         -- id 8
-('tasks.read.own',          'Ver tareas propias'),               -- id 9
-('tasks.update.status.own', 'Gestionar estado de tareas propias'), -- id 10
-('system.audit',            'Auditoría del sistema');            -- id 11
+('system.manage.all',       'Gestión total del sistema'),           -- id 1
+('users.create',            'Crear usuarios'),                      -- id 2
+('users.read.all',          'Leer todos los usuarios'),             -- id 3
+('users.update.status',     'Cambiar estado de usuarios'),          -- id 4
+('tasks.create.multiple',   'Crear tareas masivas'),                -- id 5
+('tasks.read.all',          'Ver todas las tareas'),                -- id 6
+('tasks.update.all',        'Editar cualquier tarea'),              -- id 7
+('tasks.delete.all',        'Eliminar cualquier tarea'),            -- id 8
+('tasks.read.own',          'Ver tareas propias'),                  -- id 9
+('tasks.update.status.own', 'Gestionar estado de tareas propias'),  -- id 10
+('system.audit',            'Auditoría del sistema');               -- id 11
 
 -- ============================================================================
 -- 12. ASIGNACIÓN DE PERMISOS POR ROL
@@ -230,7 +234,7 @@ INSERT INTO role_permissions (role_id, permission_id) VALUES
     (4, 11);  -- system.audit
 
 -- ============================================================================
--- FIN DEL SCRIPT
+-- FIN DEL SCRIPT v4
 --
 -- La tabla users queda vacía intencionalmente.
 -- El primer usuario que se registre recibe automáticamente el rol SuperAdmin
@@ -241,6 +245,10 @@ INSERT INTO role_permissions (role_id, permission_id) VALUES
 --   users, user_roles                      → Usuarios multi-rol
 --   tasks, user_tasks                      → Tareas y asignaciones
 --   audit_logs                             → Auditoría de eliminaciones
---   task_comments                          → Chat tarea+estudiante
+--   task_comments                          → Chat tarea+estudiante  (v4: author_id NULL)
 --   task_grades                            → Calificaciones SENA
+--
+-- POLÍTICA DE BORRADO REFERENCIAL:
+--   ON DELETE CASCADE  → el registro hijo no tiene sentido sin el padre
+--   ON DELETE SET NULL → el registro hijo debe conservarse (historial/auditoría)
 -- ============================================================================

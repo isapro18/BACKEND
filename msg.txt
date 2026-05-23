@@ -1,29 +1,13 @@
-feat(backend): comentarios por tarea, calificaciones SENA y gestion de roles
+fix(backend): proteger SuperAdmin, bloquear auto-acciones y fix integridad en task_comments
 
-COMENTARIOS
-- Agrega Comments.controller.js con getComments() y postComment()
-- GET  /api/tasks/:taskId/comments/:studentId devuelve hilo con nombre y roles del autor
-- POST /api/tasks/:taskId/comments publica mensaje con author_id del usuario autenticado
-- Cualquier usuario autenticado puede leer y escribir en su propio hilo
-
-CALIFICACIONES
-- Agrega gradeTask() y getGrade() en Comments.controller.js
-- POST /api/tasks/:taskId/grade upsert de nota 0-100 (requiere TASKS_CREATE_MULTIPLE)
-- GET  /api/tasks/:taskId/grade/:studentId devuelve nota, quien califico y si aprobo
-- Logica SENA: >= 75 aprueba, campo approved en la respuesta
-
-GESTION DE ROLES
-- GET    /api/roles lista todos los roles con sus permisos
-- GET    /api/roles/permissions lista todos los permisos del sistema
-- POST   /api/roles crea rol personalizado (requiere SYSTEM_MANAGE_ALL)
-- DELETE /api/roles/:id elimina rol (protege los 4 roles base)
-- PUT    /api/roles/:id/permissions reemplaza permisos de un rol
+PROTECCIÓN DE USUARIOS
+- deleteUser: bloquea con 403 si el admin intenta eliminarse a sí mismo
+- deleteUser: bloquea con 403 si el target es id=1 (SuperAdmin principal intocable)
+- patchUserStatus: bloquea con 403 si el admin intenta desactivarse a sí mismo
+- patchUserStatus: bloquea con 403 si el target es id=1
 
 BASE DE DATOS
-- Agrega tabla task_comments (task_id, student_id, author_id, message)
-- Agrega tabla task_grades con UNIQUE (task_id, student_id) y CHECK grade <= 100
-- Agrega created_by en tasks y target_user_id en audit_logs
-- Actualiza db_script.sql con script definitivo v3
-
-RBAC
-- Payload JWT incluye array permissions[] como union de todos los roles del usuario
+- task_comments.author_id cambia de NOT NULL a NULL
+- task_comments.author_id cambia de ON DELETE CASCADE a ON DELETE SET NULL
+- Conserva el historial del hilo cuando el instructor es eliminado del sistema
+- Actualiza db_script.sql a v4 documentando la política de borrado referencial
