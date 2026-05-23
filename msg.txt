@@ -1,13 +1,11 @@
-fix(backend): proteger SuperAdmin, bloquear auto-acciones y fix integridad en task_comments
+feat(backend): seed inicial de usuarios y roles para demo
 
-PROTECCIÓN DE USUARIOS
-- deleteUser: bloquea con 403 si el admin intenta eliminarse a sí mismo
-- deleteUser: bloquea con 403 si el target es id=1 (SuperAdmin principal intocable)
-- patchUserStatus: bloquea con 403 si el admin intenta desactivarse a sí mismo
-- patchUserStatus: bloquea con 403 si el target es id=1
-
-BASE DE DATOS
-- task_comments.author_id cambia de NOT NULL a NULL
-- task_comments.author_id cambia de ON DELETE CASCADE a ON DELETE SET NULL
-- Conserva el historial del hilo cuando el instructor es eliminado del sistema
-- Actualiza db_script.sql a v4 documentando la política de borrado referencial
+- Agrega data.sql con 7 usuarios listos para la exposición
+- Contraseñas hasheadas con bcrypt (salt 10)
+- Andres Calvete (id=1) como SuperAdmin principal
+- Laura Méndez y Carlos Ríos como Estudiantes
+- Valentina Gómez como Auditor
+- Diego Herrera como Instructor
+- Sofia Vargas con rol Instructor y Estudiante simultaneamente
+- Mateo Castillo con todos los roles del sistema
+- Incluye consulta de verificación comentada al final del archivo
